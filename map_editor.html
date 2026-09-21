@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ARENA ROYALE • Map Editor</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#080a0e;color:#eee;font:14px Segoe UI,Arial,sans-serif}body{display:flex}
+.side{width:330px;flex:0 0 330px;background:#11141b;border-right:1px solid #292d36;padding:14px;overflow:auto;z-index:5}
+h1{font-size:19px;margin:0 0 14px;letter-spacing:.5px}.section{border:1px solid #292d36;background:#151922;border-radius:10px;padding:10px;margin-bottom:10px}.section h2{font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:#9da7b7;margin:0 0 8px}
+label{display:block;color:#9da7b7;font-size:12px;margin:8px 0 4px}input,select,button{font:inherit;color:#fff;background:#1b202a;border:1px solid #343a46;border-radius:7px;padding:8px}input[type=text],input[type=number]{width:100%}button{cursor:pointer}button:hover{border-color:#707988;background:#222936}.row{display:flex;gap:7px}.row>*{flex:1}.tools{display:grid;grid-template-columns:1fr 1fr;gap:7px}.tool.active{outline:2px solid #ff5252;border-color:#ff5252}.help{color:#8993a4;font-size:11px;line-height:1.45}.status{color:#b9c1cf;font-size:11px;line-height:1.5;min-height:32px}.check{display:flex;align-items:center;gap:7px;color:#d8dce4;margin:6px 0}.check input{width:auto}.preview{width:100%;height:110px;object-fit:contain;background:#0d0f14;border:1px solid #343a46;border-radius:7px;display:block}
+.main{position:relative;flex:1;overflow:hidden;background:#080a0e}.topbar{position:absolute;top:10px;left:10px;right:10px;display:flex;justify-content:space-between;pointer-events:none;z-index:4}.pill{pointer-events:none;background:#000b;border:1px solid #333b48;border-radius:8px;padding:7px 10px;color:#cbd2dd;font-size:11px}.canvasWrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}.canvasWrap canvas{display:block;background:#0d0f14;cursor:crosshair}
+#editor{position:absolute;inset:0;width:100%;height:100%}
+</style>
+</head>
+<body>
+<aside class="side">
+<h1>🗺️ ARENA ROYALE Map Editor</h1>
+<div class="section">
+<h2>Harita</h2>
+<label>Harita ID</label><input id="id" value="map1">
+<label>Harita adı</label><input id="name" value="Map 1">
+<label>Genişlik (hücre)</label><input id="width" type="number" min="20" max="300" value="140">
+<label>Yükseklik (hücre)</label><input id="height" type="number" min="20" max="300" value="140">
+<div class="row" style="margin-top:7px"><button id="applySize">Boyutu Uygula</button><button id="centerView">Ortala</button></div>
+<div class="help" style="margin-top:7px">Haritanın sağ, sol, üst ve alt kenarındaki tutamaçlardan boyutu değiştirebilirsin.</div>
+</div>
+
+<div class="section">
+<h2>Harita resmi</h2>
+<label>Arkaplan rengi</label><input id="bgColor" type="color" value="#15171c">
+<label>Kare rengi</label><input id="color" type="color" value="#4b5563">
+<div class="row" style="margin-top:7px"><button id="svgPick">SVG seç</button><button id="clearSvg">SVG seçimini iptal et</button></div>
+<div class="row" style="margin-top:7px"><button id="pngPick">PNG seç</button><button id="clearPng">PNG seçimini iptal et</button></div>
+<button id="addImage" style="margin-top:7px;width:100%;font-weight:700">🖼️ Resim ekle</button>
+<input id="svgFile" type="file" accept=".svg,image/svg+xml" style="display:none">
+<input id="pngFile" type="file" accept=".png,image/png" style="display:none">
+<div class="help" id="imageStatus" style="margin-top:7px">SVG/PNG seçilmedi. “Resim ekle” ile seçili renkte kare eklenir.</div>
+<div class="help" style="margin-top:5px">SVG veya PNG seçersen Resim ekle seçtiğin resmi haritaya koyar. İkisini de seçmezsen aynı düğme seçtiğin renkte kare ekler. Eklenen resmi seçip taşıyabilir, köşelerinden boyutlandırabilir ve üstündeki turuncu döndürme tutamacından çevirebilirsin. Q/E tuşlarıyla 5° döndürebilirsin.</div>
+
+<label style="margin-top:12px">Thumbnail SVG</label><input id="thumbFile" type="file" accept=".svg,image/svg+xml">
+<img id="thumbPreview" class="preview" alt="Thumbnail önizleme">
+</div>
+
+<div class="section">
+<h2>Araçlar</h2>
+<div class="tools">
+<button class="tool active" data-tool="select">Seç / Taşı</button>
+<button class="tool" data-tool="collision">Collision duvarı</button>
+<button class="tool" data-tool="spawn">Spawn noktası</button>
+<button class="tool" data-tool="zone">Alan noktası</button>
+<button class="tool" data-tool="zombie">Zombi noktası</button>
+</div>
+<button id="toggleCollision" style="margin-top:8px;width:100%">👁 Collisionları göster</button>
+<button id="autoCollision" style="margin-top:7px;width:100%">🧠 Seçili resimden otomatik collision</button>
+<div class="help" style="margin-top:5px">Resmin şeffaflık bilgisinden yaklaşık collision kutuları üretir. Ayrıntılı haritalarda tek tek kutu çizmek yerine bunu kullanabilirsin.</div>
+<div class="row" style="margin-top:8px"><button id="deleteSelected">Seçileni sil</button><button id="clearAll">Tümünü sil</button></div>
+</div>
+
+<div class="section" id="transformPanel" style="display:none">
+<h2>Seçili nesne</h2>
+<div class="row"><div><label>X</label><input id="tx" type="number" step="0.1"></div><div><label>Y</label><input id="ty" type="number" step="0.1"></div></div>
+<div class="row" id="sizeRow"><div><label>Genişlik</label><input id="tw" type="number" step="0.1" min="1"></div><div><label>Yükseklik</label><input id="th" type="number" step="0.1" min="1"></div></div>
+<div class="row" id="scaleRow"><div><label>Scale X</label><input id="tsx" type="number" step="0.01" min="0.01"></div><div><label>Scale Y</label><input id="tsy" type="number" step="0.01" min="0.01"></div></div>
+<label id="rotationLabel">Rotasyon (°)</label><input id="trot" type="number" step="0.1">
+<button id="applyTransform" style="margin-top:8px;width:100%;font-weight:700">Uygula</button>
+<div class="help" style="margin-top:6px">X/Y dünya koordinatıdır. Scale, nesnenin ilk boyutuna göre hesaplanır. Çoklu seçimde bu panel gizlenir.</div>
+</div>
+
+<div class="section" id="collisionPanel" style="display:none">
+<h2>Collision seçenekleri</h2>
+<div class="check"><input id="raycast" type="checkbox"><span>Raycast geçer?</span></div>
+<div class="check"><input id="player" type="checkbox"><span>Oyuncu geçer?</span></div>
+<div class="check"><input id="bullet" type="checkbox"><span>Mermi geçer?</span></div>
+<div class="help">İşaretliyse o şey duvardan geçebilir. Örneğin Mermi geçer kapalıysa mermi duvara çarpar.</div>
+</div>
+
+<div class="section">
+<h2>Dosya</h2>
+<div class="row"><button id="load">JSON yükle</button><button id="export">JSON dışa aktar</button></div>
+<input id="jsonFile" type="file" accept=".json" style="display:none">
+<div id="status" class="status" style="margin-top:8px"></div>
+</div>
+<div class="help">Haritalar yalnızca JSON olarak kaydedilir. Sağ/orta tuş sürükleme kamerayı taşır, tekerlek yakınlaştırır. Boş alanda sol tuş sürüklemek çoklu seçim yapar. Shift+Resim boyutlandırma oranı korur.</div>
+</aside>
+
+<main class="main">
+<div class="topbar"><div class="pill" id="viewInfo">100%</div><div class="pill">Sağ/orta tuş: kamera • Tekerlek: zoom • Shift: oranı koru</div></div>
+<div class="canvasWrap"><canvas id="editor" width="1400" height="900"></canvas></div>
+</main>
+
+<script>
+const CELL=48, MIN_SIZE=20, MAX_SIZE=300;
+const canvas=document.getElementById('editor'),ctx=canvas.getContext('2d');ctx.imageSmoothingEnabled=false;
+const $=id=>document.getElementById(id);
+let W=140,H=140,bgColor='#15171c',rectColor='#4b5563',selectedSvg=null,selectedPng=null,thumbSvg=null;
+let mapImages=[],collisionWalls=[],spawnPoints=[],zonePoints=[],zombiePoints=[];
+let tool='select',selected=[],dragging=null,showCollisions=false;
+let view={x:W*CELL/2,y:H*CELL/2,zoom:.14};
+const imageCache=new Map();
+
+function uid(p){return p+'_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7)}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function assetSrc(v){if(!v)return null;if(/^data:image\//.test(v)||/^https?:\/\//.test(v))return v;if(/^<svg[\s>]/i.test(v.trim()))return 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(v);return null}
+function loadImg(src){if(!src)return null;if(imageCache.has(src))return imageCache.get(src);const img=new Image();img.onload=draw;img.src=assetSrc(src)||src;imageCache.set(src,img);return img}
+function readSvg(file,cb){const r=new FileReader();r.onload=()=>cb('data:image/svg+xml;charset=utf-8,'+encodeURIComponent(r.result));r.readAsText(file)}
+
+function resizeCanvas(){
+  canvas.width=Math.max(900,innerWidth-330);
+  canvas.height=Math.max(600,innerHeight);
+  draw();
+}
+window.addEventListener('resize',resizeCanvas);
+
+// Canvas/client/world coordinates are kept strictly separate.
+function clientToCanvas(e){
+  const r=canvas.getBoundingClientRect();
+  return {
+    x:(e.clientX-r.left)*(canvas.width/r.width),
+    y:(e.clientY-r.top)*(canvas.height/r.height)
+  };
+}
+function canvasToWorld(c){
+  return {
+    x:(c.x-canvas.width/2)/view.zoom+view.x,
+    y:(c.y-canvas.height/2)/view.zoom+view.y
+  };
+}
+function eventToWorld(e){return canvasToWorld(clientToCanvas(e));}
+function worldToCanvas(x,y){return {x:canvas.width/2+(x-view.x)*view.zoom,y:canvas.height/2+(y-view.y)*view.zoom};}
+function worldSize(){return {w:W*CELL,h:H*CELL};}
+function screenRect(){
+  const s=worldSize();
+  const q=worldToCanvas(0,0);
+  return {x:q.x,y:q.y,w:s.w*view.zoom,h:s.h*view.zoom};
+}
+function pointInsideMap(p){return p.x>=0&&p.y>=0&&p.x<=W*CELL&&p.y<=H*CELL;}
+function clampWorldPoint(p){return {x:clamp(p.x,0,W*CELL),y:clamp(p.y,0,H*CELL)};}
+
+function selectedList(){return Array.isArray(selected)?selected:[]}
+function isSelected(type,id){return selectedList().some(s=>s.type===type&&s.id===id)}
+function setSelection(items){
+  selected=items.length?items.slice():[];
+  syncCollisionPanel();
+  syncTransformPanel();
+  draw();
+}
+function syncTransformPanel(){
+  const panel=$('transformPanel');
+  const s=selectedList().length===1?selectedList()[0]:null;
+  const o=s?getObject(s.type,s.id):null;
+  if(!o){panel.style.display='none';return}
+  panel.style.display='block';
+  $('tx').value=Number(o.x||0).toFixed(2);$('ty').value=Number(o.y||0).toFixed(2);
+  const hasSize='w' in o;
+  $('sizeRow').style.display=hasSize?'flex':'none';$('scaleRow').style.display=hasSize?'flex':'none';$('rotationLabel').style.display=hasSize?'block':'none';$('trot').style.display=hasSize?'block':'none';
+  if(hasSize){
+    if(!o.baseW)o.baseW=o.w;if(!o.baseH)o.baseH=o.h;
+    $('tw').value=Number(o.w).toFixed(2);$('th').value=Number(o.h).toFixed(2);
+    $('tsx').value=(o.w/o.baseW).toFixed(3);$('tsy').value=(o.h/o.baseH).toFixed(3);$('trot').value=Number(o.rotation||0).toFixed(2);
+  }
+}
+function applyTransform(){
+  if(selectedList().length!==1)return;
+  const s=selectedList()[0],o=getObject(s.type,s.id);if(!o)return;
+  o.x=+($('tx').value)||0;o.y=+($('ty').value)||0;
+  if('w' in o){
+    if(!o.baseW)o.baseW=o.w;if(!o.baseH)o.baseH=o.h;
+    const sx=Math.max(.01,+$('tsx').value||1),sy=Math.max(.01,+$('tsy').value||1);
+    o.w=Math.max(1,o.baseW*sx);o.h=Math.max(1,o.baseH*sy);o.rotation=normalizeDeg(+$('trot').value||0);clampRotatedObject(o);
+  }else{ o.x=clamp(o.x,0,W*CELL);o.y=clamp(o.y,0,H*CELL); }
+  syncTransformPanel();draw();
+}
+$('applyTransform').onclick=applyTransform;
+for(const id of ['tx','ty','tw','th','tsx','tsy','trot'])$(id).addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();applyTransform();}});
+
+function getList(type){
+  return type==='image'?mapImages:type==='wall'?collisionWalls:type==='spawn'?spawnPoints:type==='zone'?zonePoints:zombiePoints;
+}
+function getObject(type,id){return getList(type)?.find(o=>o.id===id)||null}
+function setTool(t){
+  tool=t;selected=[];dragging=null;
+  document.querySelectorAll('.tool').forEach(b=>b.classList.toggle('active',b.dataset.tool===t));
+  syncCollisionPanel();draw();
+}
+document.querySelectorAll('.tool').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
+
+function normalizeDeg(a){a=((a+180)%360+360)%360-180;return a}
+function rad(deg){return deg*Math.PI/180}
+function objectCenter(o){return {x:o.x+o.w/2,y:o.y+o.h/2}}
+function worldToLocal(o,p){
+  const c=objectCenter(o),a=rad(o.rotation||0),ca=Math.cos(a),sa=Math.sin(a);
+  const dx=p.x-c.x,dy=p.y-c.y;
+  return {x:dx*ca+dy*sa,y:-dx*sa+dy*ca}
+}
+function localToWorld(o,p){
+  const c=objectCenter(o),a=rad(o.rotation||0),ca=Math.cos(a),sa=Math.sin(a);
+  return {x:c.x+p.x*ca-p.y*sa,y:c.y+p.x*sa+p.y*ca}
+}
+function rotatedCorners(o){
+  const pts=[{x:-o.w/2,y:-o.h/2},{x:o.w/2,y:-o.h/2},{x:o.w/2,y:o.h/2},{x:-o.w/2,y:o.h/2}];
+  return pts.map(p=>localToWorld(o,p));
+}
+function pointInRect(o,p){const q=worldToLocal(o,p);return q.x>=-o.w/2&&q.x<=o.w/2&&q.y>=-o.h/2&&q.y<=o.h/2}
+function hitRect(list,p){
+  for(let i=list.length-1;i>=0;i--){
+    const o=list[i];
+    if(pointInRect(o,p))return o;
+  }
+  return null;
+}
+function hitPoint(list,p,type){
+  const radius=16/view.zoom;
+  for(let i=list.length-1;i>=0;i--){const o=list[i];if(Math.hypot(o.x-p.x,o.y-p.y)<=radius)return {type,id:o.id};}
+  return null;
+}
+function handlesForRect(o){
+  const pts=[
+    ['nw',-o.w/2,-o.h/2],['n',0,-o.h/2],['ne',o.w/2,-o.h/2],
+    ['e',o.w/2,0],['se',o.w/2,o.h/2],['s',0,o.h/2],
+    ['sw',-o.w/2,o.h/2],['w',-o.w/2,0]
+  ];
+  const out=pts.map(([id,x,y])=>{const q=localToWorld(o,{x,y});return {id,x:q.x,y:q.y}});
+  const rot=localToWorld(o,{x:0,y:-o.h/2-34});
+  out.push({id:'rot',x:rot.x,y:rot.y});
+  return out;
+}
+function hitHandle(o,p){
+  const mouse=worldToCanvas(p.x,p.y);
+  for(const h of handlesForRect(o)){
+    const hs=worldToCanvas(h.x,h.y);
+    if(Math.hypot(hs.x-mouse.x,hs.y-mouse.y)<=11)return h.id;
+  }
+  return null;
+}
+
+function borderHandleScreen(x,y){
+  const r=screenRect(),z=14;
+  const hs={
+    l:{x:r.x,y:r.y+r.h/2},r:{x:r.x+r.w,y:r.y+r.h/2},
+    t:{x:r.x+r.w/2,y:r.y},b:{x:r.x+r.w/2,y:r.y+r.h}
+  };
+  for(const [k,h] of Object.entries(hs))if(Math.hypot(x-h.x,y-h.y)<z)return k;
+  return null;
+}
+
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+canvas.addEventListener('mousedown',e=>{
+  e.preventDefault();
+  if(e.button===2||e.button===1){
+    dragging={kind:'pan',startClientX:e.clientX,startClientY:e.clientY,startViewX:view.x,startViewY:view.y};
+    return;
+  }
+  if(e.button!==0)return;
+
+  const cp=clientToCanvas(e);
+  const raw=canvasToWorld(cp);
+  const p=clampWorldPoint(raw);
+  const border=borderHandleScreen(cp.x,cp.y);
+  if(border){
+    dragging={
+      kind:'resizeMap',handle:border,startClientX:e.clientX,startClientY:e.clientY,
+      startW:W,startH:H,startViewX:view.x,startViewY:view.y,
+      base:[...mapImages,...collisionWalls,...spawnPoints,...zonePoints,...zombiePoints].map(o=>({o,x:o.x,y:o.y}))
+    };
+    selected=[];syncCollisionPanel();draw();return;
+  }
+
+  if(tool==='collision'){
+    const hit=showCollisions?hitRect(collisionWalls,p):null;
+    if(hit){
+      setSelection([{type:'wall',id:hit.id}]);
+      dragging={kind:'moveWall',id:hit.id,grabX:raw.x-hit.x,grabY:raw.y-hit.y};
+      return;
+    }
+    dragging={kind:'newWall',x0:p.x,y0:p.y,x1:p.x,y1:p.y};
+    setSelection([]);return;
+  }
+  if(tool==='spawn'){const q={id:uid('sp'),x:p.x,y:p.y};spawnPoints.push(q);setSelection([{type:'spawn',id:q.id}]);return}
+  if(tool==='zone'){const q={id:uid('zone'),x:p.x,y:p.y};zonePoints.push(q);setSelection([{type:'zone',id:q.id}]);return}
+  if(tool==='zombie'){const q={id:uid('z'),x:p.x,y:p.y};zombiePoints.push(q);setSelection([{type:'zombie',id:q.id}]);return}
+
+  // Selection priority: points first, then images, then collision walls.
+  // This lets spawn/zone/zombie markers be selected even when they sit on top of a map image.
+  const pointHit=hitPoint(spawnPoints,p,'spawn')||hitPoint(zonePoints,p,'zone')||hitPoint(zombiePoints,p,'zombie');
+  if(pointHit){
+    let next=selectedList();
+    if(e.shiftKey){
+      const exists=next.some(s=>s.type===pointHit.type&&s.id===pointHit.id);
+      next=exists?next.filter(s=>!(s.type===pointHit.type&&s.id===pointHit.id)):[...next,pointHit];
+    }else next=[pointHit];
+    setSelection(next);
+    if(next.length===1&&!e.shiftKey){
+      const o=getObject(pointHit.type,pointHit.id);
+      if(o)dragging={kind:'movePoint',type:pointHit.type,id:pointHit.id,grabX:raw.x-o.x,grabY:raw.y-o.y};
+    }else if(next.length>1){
+      dragging={kind:'moveMulti',startX:raw.x,startY:raw.y,items:next.map(s=>{const o=getObject(s.type,s.id);return {type:s.type,id:s.id,x:o.x,y:o.y};})};
+    }
+    return;
+  }
+
+  // A selected object's handles are clickable after point selection has been checked.
+  if(selectedList().length===1){
+    const sel=selectedList()[0];
+    if(sel.type==='image'||(sel.type==='wall'&&showCollisions)){
+      const so=getObject(sel.type,sel.id),sh=so&&hitHandle(so,raw);
+      if(so&&sh){
+        if(sh==='rot') dragging={kind:'rotateObject',type:sel.type,id:so.id,start:{...so}};
+        else dragging={kind:sel.type==='image'?'resizeImage':'resizeWall',id:so.id,handle:sh,start:{...so}};
+        return;
+      }
+    }
+  }
+
+  // Selection priority after points: images, then collision walls.
+  const img=hitRect(mapImages,p);
+  const wall=showCollisions?hitRect(collisionWalls,p):null;
+  const hit=img?{type:'image',id:img.id}:wall?{type:'wall',id:wall.id}:null;
+
+  if(hit){
+    let next=selectedList();
+    if(e.shiftKey){
+      const exists=next.some(s=>s.type===hit.type&&s.id===hit.id);
+      next=exists?next.filter(s=>!(s.type===hit.type&&s.id===hit.id)):[...next,hit];
+    }else next=[hit];
+    setSelection(next);
+
+    if(next.length===1 && !e.shiftKey){
+      const o=getObject(hit.type,hit.id);
+      if(hit.type==='image'){
+        const h=hitHandle(o,raw);
+        if(h==='rot') dragging={kind:'rotateObject',type:'image',id:o.id,start:{...o}};
+        else if(h) dragging={kind:'resizeImage',id:o.id,handle:h,start:{...o}};
+        else {const c=objectCenter(o);dragging={kind:'moveImage',id:o.id,grabX:raw.x-c.x,grabY:raw.y-c.y};}
+      }else if(hit.type==='wall'){
+        const h=hitHandle(o,raw);
+        if(h==='rot') dragging={kind:'rotateObject',type:'wall',id:o.id,start:{...o}};
+        else if(h) dragging={kind:'resizeWall',id:o.id,handle:h,start:{...o}};
+        else {const c=objectCenter(o);dragging={kind:'moveWall',id:o.id,grabX:raw.x-c.x,grabY:raw.y-c.y};}
+      }else{
+        dragging={kind:'movePoint',type:hit.type,id:hit.id,grabX:raw.x-o.x,grabY:raw.y-o.y};
+      }
+    }else if(next.length>1){
+      dragging={
+        kind:'moveMulti',startX:raw.x,startY:raw.y,
+        items:next.map(s=>{const o=getObject(s.type,s.id);return {type:s.type,id:s.id,x:o.x,y:o.y};})
+      };
+    }
+    return;
+  }
+
+  // Empty area = marquee selection.
+  dragging={kind:'marquee',x0:p.x,y0:p.y,x1:p.x,y1:p.y,add:e.shiftKey};
+});
+
+window.addEventListener('keydown',e=>{
+  if(e.target&&['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName))return;
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='d'&&selectedList().length){
+    e.preventDefault();
+    const copies=[];
+    for(const s of selectedList()){
+      const o=getObject(s.type,s.id);if(!o)continue;
+      const n=JSON.parse(JSON.stringify(o));
+      n.id=uid(s.type==='wall'?'cw':s.type==='image'?'img':s.type==='spawn'?'sp':s.type==='zone'?'zone':'z');
+      n.x+=20;n.y+=20;
+      if(n.w)n.x=clamp(n.x,0,Math.max(0,W*CELL-n.w));else n.x=clamp(n.x,0,W*CELL);
+      if(n.h)n.y=clamp(n.y,0,Math.max(0,H*CELL-n.h));else n.y=clamp(n.y,0,H*CELL);
+      if(s.type==='image')mapImages.push(n);else if(s.type==='wall')collisionWalls.push(n);else if(s.type==='spawn')spawnPoints.push(n);else if(s.type==='zone')zonePoints.push(n);else zombiePoints.push(n);
+      copies.push({type:s.type,id:n.id});
+    }
+    setSelection(copies);return;
+  }
+  if(['Delete','Backspace'].includes(e.key)&&selectedList().length){e.preventDefault();deleteCurrentSelection();return;}
+  if((e.key==='q'||e.key==='Q'||e.key==='e'||e.key==='E')&&selectedList().length){
+    e.preventDefault();
+    const step=e.shiftKey?15:5;
+    const delta=(e.key.toLowerCase()==='q'?-step:step);
+    for(const s of selectedList()){
+      if(s.type!=='image'&&s.type!=='wall')continue;
+      const o=getObject(s.type,s.id);if(o)o.rotation=normalizeDeg((o.rotation||0)+delta);
+    }
+    draw();return;
+  }
+  if(!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)||!selectedList().length)return;
+  e.preventDefault();
+  const step=e.shiftKey?20:4;
+  const dx=e.key==='ArrowLeft'?-step:e.key==='ArrowRight'?step:0;
+  const dy=e.key==='ArrowUp'?-step:e.key==='ArrowDown'?step:0;
+  for(const s of selectedList()){
+    const o=getObject(s.type,s.id);if(!o)continue;
+    if('w' in o)o.x=clamp(o.x+dx,0,Math.max(0,W*CELL-o.w));else o.x=clamp(o.x+dx,0,W*CELL);
+    if('h' in o)o.y=clamp(o.y+dy,0,Math.max(0,H*CELL-o.h));else o.y=clamp(o.y+dy,0,H*CELL);
+  }
+  draw();
+});
+
+window.addEventListener('mousemove',e=>{
+  if(!dragging)return;
+  const cp=clientToCanvas(e);
+  const raw=canvasToWorld(cp);
+  const p=clampWorldPoint(raw);
+
+  if(dragging.kind==='pan'){
+    const dx=(e.clientX-dragging.startClientX)/((canvas.width/canvas.getBoundingClientRect().width)||1)/view.zoom;
+    const dy=(e.clientY-dragging.startClientY)/((canvas.height/canvas.getBoundingClientRect().height)||1)/view.zoom;
+    view.x=dragging.startViewX-dx;
+    view.y=dragging.startViewY-dy;
+    draw();return;
+  }
+
+  if(dragging.kind==='resizeMap'){
+    const r=canvas.getBoundingClientRect();
+    const scaleX=canvas.width/r.width,scaleY=canvas.height/r.height;
+    const dxWorld=(e.clientX-dragging.startClientX)*scaleX/view.zoom;
+    const dyWorld=(e.clientY-dragging.startClientY)*scaleY/view.zoom;
+    const dxCells=Math.round(dxWorld/CELL),dyCells=Math.round(dyWorld/CELL);
+    let nw=dragging.startW,nh=dragging.startH;
+    if(dragging.handle==='r')nw+=dxCells;
+    if(dragging.handle==='l')nw-=dxCells;
+    if(dragging.handle==='b')nh+=dyCells;
+    if(dragging.handle==='t')nh-=dyCells;
+    applyInteractiveMapResize(nw,nh,dragging);return;
+  }
+
+  if(dragging.kind==='newWall'){
+    dragging.x1=p.x;dragging.y1=p.y;draw();return;
+  }
+
+  if(dragging.kind==='moveImage'){
+    const o=getObject('image',dragging.id);
+    if(o){const cx=raw.x-dragging.grabX,cy=raw.y-dragging.grabY;o.x=cx-o.w/2;o.y=cy-o.h/2;clampRotatedObject(o);}
+    draw();return;
+  }
+
+  if(dragging.kind==='moveWall'){
+    const o=getObject('wall',dragging.id);
+    if(o){const cx=raw.x-dragging.grabX,cy=raw.y-dragging.grabY;o.x=cx-o.w/2;o.y=cy-o.h/2;clampRotatedObject(o);}
+    draw();return;
+  }
+
+  if(dragging.kind==='movePoint'){
+    const o=getObject(dragging.type,dragging.id);
+    if(o){o.x=clamp(raw.x-dragging.grabX,0,W*CELL);o.y=clamp(raw.y-dragging.grabY,0,H*CELL);}
+    draw();return;
+  }
+
+  if(dragging.kind==='moveMulti'){
+    const dx=raw.x-dragging.startX,dy=raw.y-dragging.startY;
+    for(const s of dragging.items){
+      const o=getObject(s.type,s.id);if(!o)continue;
+      if('w' in o)o.x=clamp(s.x+dx,0,Math.max(0,W*CELL-o.w));else o.x=clamp(s.x+dx,0,W*CELL);
+      if('h' in o)o.y=clamp(s.y+dy,0,Math.max(0,H*CELL-o.h));else o.y=clamp(s.y+dy,0,H*CELL);
+    }
+    draw();return;
+  }
+
+  if(dragging.kind==='marquee'){
+    dragging.x1=p.x;dragging.y1=p.y;draw();return;
+  }
+
+  if(dragging.kind==='rotateObject'){
+    const o=getObject(dragging.type,dragging.id);
+    if(o){
+      const c=objectCenter(dragging.start),a=Math.atan2(raw.y-c.y,raw.x-c.x)*180/Math.PI;
+      o.rotation=normalizeDeg(a+90);
+    }
+    draw();return;
+  }
+
+  if(dragging.kind==='resizeImage'){
+    resizeObject(mapImages,dragging,raw,e.shiftKey);return;
+  }
+  if(dragging.kind==='resizeWall'){
+    resizeObject(collisionWalls,dragging,raw,false);return;
+  }
+});
+
+window.addEventListener('mouseup',()=>{
+  if(!dragging)return;
+  if(dragging.kind==='newWall'){
+    const x=Math.min(dragging.x0,dragging.x1),y=Math.min(dragging.y0,dragging.y1),w=Math.abs(dragging.x1-dragging.x0),h=Math.abs(dragging.y1-dragging.y0);
+    if(w>4&&h>4){const q={id:uid('cw'),x,y,w,h,rotation:0,baseW:w,baseH:h,raycast:false,player:false,bullet:false};collisionWalls.push(q);setSelection([{type:'wall',id:q.id}]);}
+  }
+  if(dragging.kind==='marquee'){
+    const x1=Math.min(dragging.x0,dragging.x1),y1=Math.min(dragging.y0,dragging.y1),x2=Math.max(dragging.x0,dragging.x1),y2=Math.max(dragging.y0,dragging.y1);
+    const moved=Math.abs(x2-x1)>4||Math.abs(y2-y1)>4;
+    if(moved){
+      const inside=(o,point=false)=>point?(o.x>=x1&&o.x<=x2&&o.y>=y1&&o.y<=y2):rotatedCorners(o).some(q=>q.x>=x1&&q.x<=x2&&q.y>=y1&&q.y<=y2)||pointInRect(o,{x:x1,y:y1})||pointInRect(o,{x:x2,y:y1})||pointInRect(o,{x:x1,y:y2})||pointInRect(o,{x:x2,y:y2});
+      const found=[];
+      for(const o of mapImages)if(inside(o))found.push({type:'image',id:o.id});
+      if(showCollisions)for(const o of collisionWalls)if(inside(o))found.push({type:'wall',id:o.id});
+      for(const o of spawnPoints)if(inside(o,true))found.push({type:'spawn',id:o.id});
+      for(const o of zonePoints)if(inside(o,true))found.push({type:'zone',id:o.id});
+      for(const o of zombiePoints)if(inside(o,true))found.push({type:'zombie',id:o.id});
+      setSelection(dragging.add?[...selectedList(),...found.filter(f=>!isSelected(f.type,f.id))]:found);
+    }else if(!dragging.add){setSelection([])}
+  }
+  dragging=null;draw();
+});
+
+function resizeObject(list,d,p,keepAspect){
+  const o=list.find(x=>x.id===d.id);if(!o)return;
+  const s=d.start;
+  const q=worldToLocal(s,p);
+  let left=-s.w/2,right=s.w/2,top=-s.h/2,bottom=s.h/2;
+  if(d.handle.includes('w'))left=q.x;
+  if(d.handle.includes('e'))right=q.x;
+  if(d.handle.includes('n'))top=q.y;
+  if(d.handle.includes('s'))bottom=q.y;
+  if(keepAspect){
+    const ar=Math.max(0.0001,s.w/Math.max(0.0001,s.h));
+    let w=Math.abs(right-left),h=Math.abs(bottom-top);
+    if(['n','s'].includes(d.handle))w=h*ar;
+    else if(['e','w'].includes(d.handle))h=w/ar;
+    else if(w/h>ar)h=w/ar;else w=h*ar;
+    if(d.handle.includes('w'))left=right-w;else right=left+w;
+    if(d.handle.includes('n'))top=bottom-h;else bottom=top+h;
+  }
+  let w=Math.max(4,Math.abs(right-left)),h=Math.max(4,Math.abs(bottom-top));
+  let cx=(left+right)/2,cy=(top+bottom)/2;
+  const c=objectCenter(s),a=rad(s.rotation||0),ca=Math.cos(a),sa=Math.sin(a);
+  const center={x:c.x+cx*ca-cy*sa,y:c.y+cx*sa+cy*ca};
+  o.w=w;o.h=h;o.x=center.x-w/2;o.y=center.y-h/2;o.rotation=s.rotation||0;
+  clampRotatedObject(o);
+  draw();
+}
+function clampRotatedObject(o){
+  // Keep the object's center inside the map while allowing its rotated bounds to approach the edge.
+  const c=objectCenter(o),corners=rotatedCorners(o);
+  let dx=0,dy=0;
+  const minX=Math.min(...corners.map(q=>q.x)),maxX=Math.max(...corners.map(q=>q.x));
+  const minY=Math.min(...corners.map(q=>q.y)),maxY=Math.max(...corners.map(q=>q.y));
+  if(minX<0)dx=-minX;if(maxX>W*CELL)dx=W*CELL-maxX;
+  if(minY<0)dy=-minY;if(maxY>H*CELL)dy=H*CELL-maxY;
+  o.x+=dx;o.y+=dy;
+}
+
+function applyInteractiveMapResize(nw,nh,d){
+  nw=clamp(Math.round(nw),MIN_SIZE,MAX_SIZE);nh=clamp(Math.round(nh),MIN_SIZE,MAX_SIZE);
+  const shiftX=(d.handle==='l'?(nw-d.startW):0)*CELL;
+  const shiftY=(d.handle==='t'?(nh-d.startH):0)*CELL;
+  for(const b of d.base){b.o.x=b.x+shiftX;b.o.y=b.y+shiftY;}
+  W=nw;H=nh;
+  // Keep all existing content in exactly the same screen position when the top/left edge moves.
+  view.x=d.startViewX+shiftX;
+  view.y=d.startViewY+shiftY;
+  clampAll();
+  $('width').value=W;$('height').value=H;
+  draw();
+}
+function setMapSize(nw,nh){
+  nw=clamp(Math.round(nw),MIN_SIZE,MAX_SIZE);nh=clamp(Math.round(nh),MIN_SIZE,MAX_SIZE);
+  W=nw;H=nh;clampAll();
+  view.x=clamp(view.x,0,W*CELL);view.y=clamp(view.y,0,H*CELL);
+  $('width').value=W;$('height').value=H;draw();
+}
+function clampAll(){
+  for(const o of [...mapImages,...collisionWalls]){
+    o.w=Math.max(4,+o.w||4);o.h=Math.max(4,+o.h||4);o.rotation=normalizeDeg(+o.rotation||0);
+    clampRotatedObject(o);
+  }
+  for(const a of [...spawnPoints,...zonePoints,...zombiePoints]){a.x=clamp(a.x,0,W*CELL);a.y=clamp(a.y,0,H*CELL);}
+}
+
+canvas.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const before=eventToWorld(e);
+  const factor=e.deltaY<0?1.12:.89;
+  view.zoom=clamp(view.zoom*factor,.05,3);
+  const after=eventToWorld(e);
+  view.x+=before.x-after.x;view.y+=before.y-after.y;
+  draw();
+},{passive:false});
+
+$('applySize').onclick=()=>setMapSize(+$('width').value,+$('height').value);
+$('centerView').onclick=()=>{view.x=W*CELL/2;view.y=H*CELL/2;draw()};
+$('toggleCollision').onclick=()=>{showCollisions=!showCollisions;$('toggleCollision').textContent=showCollisions?'👁 Collisionları gizle':'👁 Collisionları göster';draw()};
+$('raycast').onchange=$('player').onchange=$('bullet').onchange=()=>{const w=collisionWalls.find(x=>selectedList().some(s=>s.type==='wall'&&s.id===x.id));if(w){w.raycast=$('raycast').checked;w.player=$('player').checked;w.bullet=$('bullet').checked}};
+function syncCollisionPanel(){const wallSel=selectedList().find(s=>s.type==='wall');const w=wallSel?getObject('wall',wallSel.id):null;$('collisionPanel').style.display=w?'block':'none';if(w){$('raycast').checked=w.raycast===true;$('player').checked=w.player===true;$('bullet').checked=w.bullet===true}}
+
+async function autoCollisionFromSelected(){
+  const s=selectedList().find(x=>x.type==='image');
+  if(!s){alert('Önce bir SVG veya PNG seç.');return;}
+  const o=getObject('image',s.id);
+  if(!o||o.type==='rect'){alert('Seçili nesne bir SVG veya PNG olmalı.');return;}
+  const src=o.type==='png'?o.src:o.svg;
+  const img=loadImg(src);
+  if(!img)return;
+  if(!img.complete||!img.naturalWidth){
+    await new Promise(resolve=>{const old=img.onload;img.onload=()=>{old&&old();resolve()};});
+  }
+
+  // Collision mask is generated at WORLD-PIXEL resolution. No downsampling:
+  // a single transparent world pixel remains a real gap in the collision.
+  const rw=Math.max(1,Math.ceil(o.w)), rh=Math.max(1,Math.ceil(o.h));
+  const CHUNK=96;
+  const active=new Map();
+  const newWalls=[];
+  let totalSolid=0;
+
+  const finishRun=(key,run)=>{
+    if(!run)return;
+    const [x0,x1]=run;
+    const gy0=run._y0, gy1=run._y1;
+    const lx=((x0+x1)/2)/rw*o.w-o.w/2;
+    const ly=((gy0+gy1)/2)/rh*o.h-o.h/2;
+    const ww=(x1-x0)/rw*o.w;
+    const hh=(gy1-gy0)/rh*o.h;
+    if(ww<=0||hh<=0)return;
+    const c=objectCenter(o),a=rad(o.rotation||0),ca=Math.cos(a),sa=Math.sin(a);
+    const center={x:c.x+lx*ca-ly*sa,y:c.y+lx*sa+ly*ca};
+    newWalls.push({id:uid('cw'),x:center.x-ww/2,y:center.y-hh/2,w:ww,h:hh,baseW:ww,baseH:hh,rotation:o.rotation||0,raycast:false,player:false,bullet:false});
+  };
+
+  for(let y0=0;y0<rh;y0+=CHUNK){
+    const ch=Math.min(CHUNK,rh-y0);
+    const cv=document.createElement('canvas');cv.width=rw;cv.height=ch;
+    const cc=cv.getContext('2d',{willReadFrequently:true});
+    cc.imageSmoothingEnabled=false;
+    cc.clearRect(0,0,rw,ch);
+    // Draw the original asset at exactly the world-object dimensions.
+    cc.drawImage(img,0,-y0,rw,rh);
+    const data=cc.getImageData(0,0,rw,ch).data;
+
+    for(let yy=0;yy<ch;yy++){
+      const gy=y0+yy;
+      const runs=[];
+      let runStart=-1;
+      for(let x=0;x<rw;x++){
+        const alpha=data[(yy*rw+x)*4+3];
+        const solid=alpha!==0;
+        if(solid&&runStart<0)runStart=x;
+        if(!solid&&runStart>=0){runs.push([runStart,x]);runStart=-1;}
+      }
+      if(runStart>=0)runs.push([runStart,rw]);
+      totalSolid+=runs.reduce((n,r)=>n+r[1]-r[0],0);
+
+      const next=new Map();
+      for(const run of runs){
+        const key=run[0]+':'+run[1];
+        const old=active.get(key);
+        if(old&&old._y1===gy){old._y1=gy+1;next.set(key,old);}
+        else{
+          const r=[run[0],run[1]];r._y0=gy;r._y1=gy+1;next.set(key,r);
+        }
+      }
+      for(const [key,old] of active){if(!next.has(key))finishRun(key,old);}
+      active.clear();for(const [key,val] of next)active.set(key,val);
+    }
+  }
+  for(const [key,old] of active)finishRun(key,old);
+
+  if(!newWalls.length){alert('Opak piksel bulunamadı.');return;}
+  collisionWalls.push(...newWalls);
+  showCollisions=true;
+  $('toggleCollision').textContent='👁 Collisionları gizle';
+  setSelection(newWalls.map(w=>({type:'wall',id:w.id})));
+  draw();
+  $('status').textContent=`Tam çözünürlük collision: ${newWalls.length} kutu • ${totalSolid.toLocaleString('tr-TR')} dolu piksel işlendi.`;
+}
+$('autoCollision').onclick=autoCollisionFromSelected;
+$('svgPick').onclick=()=>$('svgFile').click();
+$('svgFile').onchange=e=>{const f=e.target.files[0];if(!f)return;readSvg(f,d=>{selectedSvg=d;selectedPng=null;$('pngFile').value='';$('imageStatus').textContent='SVG seçili. “Resim ekle” şimdi bu SVGyi ekleyecek.'})};
+$('clearSvg').onclick=()=>{selectedSvg=null;$('svgFile').value='';if(!selectedPng)$('imageStatus').textContent='SVG/PNG seçilmedi. “Resim ekle” ile seçili renkte kare eklenir.'};
+$('pngPick').onclick=()=>$('pngFile').click();
+$('pngFile').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{selectedPng=r.result;selectedSvg=null;$('svgFile').value='';$('imageStatus').textContent='PNG seçili. “Resim ekle” şimdi bu PNGyi ekleyecek.'};r.readAsDataURL(f)};
+$('clearPng').onclick=()=>{selectedPng=null;$('pngFile').value='';if(!selectedSvg)$('imageStatus').textContent='SVG/PNG seçilmedi. “Resim ekle” ile seçili renkte kare eklenir.'};
+$('addImage').onclick=()=>{
+  const cx=view.x,cy=view.y;let o;
+  if(selectedSvg || selectedPng){
+    const src=selectedSvg||selectedPng, type=selectedSvg?'svg':'png';
+    const img=loadImg(src),iw=img?.naturalWidth||200,ih=img?.naturalHeight||200,max=700,sc=Math.min(1,max/iw,max/ih);
+    o={id:uid('img'),type,x:clamp(cx-iw*sc/2,0,Math.max(0,W*CELL-20)),y:clamp(cy-ih*sc/2,0,Math.max(0,H*CELL-20)),w:Math.max(20,iw*sc),h:Math.max(20,ih*sc),rotation:0,baseW:Math.max(20,iw*sc),baseH:Math.max(20,ih*sc),svg:selectedSvg||null,src:selectedPng||null};
+  }else o={id:uid('img'),type:'rect',x:clamp(cx-100,0,Math.max(0,W*CELL-200)),y:clamp(cy-100,0,Math.max(0,H*CELL-200)),w:200,h:200,rotation:0,baseW:200,baseH:200,color:rectColor};
+  mapImages.push(o);setSelection([{type:'image',id:o.id}]);tool='select';document.querySelectorAll('.tool').forEach(b=>b.classList.toggle('active',b.dataset.tool==='select'));draw();
+};
+
+function deleteCurrentSelection(){
+  const sels=selectedList();if(!sels.length)return;
+  for(const s of sels){
+    if(s.type==='image')mapImages=mapImages.filter(x=>x.id!==s.id);
+    if(s.type==='wall')collisionWalls=collisionWalls.filter(x=>x.id!==s.id);
+    if(s.type==='spawn')spawnPoints=spawnPoints.filter(x=>x.id!==s.id);
+    if(s.type==='zone')zonePoints=zonePoints.filter(x=>x.id!==s.id);
+    if(s.type==='zombie')zombiePoints=zombiePoints.filter(x=>x.id!==s.id);
+  }
+  setSelection([]);
+}
+$('deleteSelected').onclick=deleteCurrentSelection;
+$('clearAll').onclick=()=>{mapImages=[];collisionWalls=[];spawnPoints=[];zonePoints=[];zombiePoints=[];setSelection([])};
+$('bgColor').oninput=e=>{bgColor=e.target.value;draw()};
+$('color').oninput=e=>{rectColor=e.target.value;draw()};
+$('thumbFile').onchange=e=>{const f=e.target.files[0];if(!f)return;readSvg(f,d=>{thumbSvg=d;$('thumbPreview').src=assetSrc(d);})};
+
+function makeThumbnail(){
+  const w=280,h=180;let body=`<rect width="${w}" height="${h}" fill="${bgColor}"/>`;
+  for(const o of mapImages){
+    const x=o.x/(W*CELL)*w,y=o.y/(H*CELL)*h,ww=o.w/(W*CELL)*w,hh=o.h/(H*CELL)*h,angle=o.rotation||0,cx=x+ww/2,cy=y+hh/2;
+    const tr=`transform="translate(${cx} ${cy}) rotate(${angle}) translate(${-cx} ${-cy})"`;
+    if(o.type==='rect')body+=`<rect x="${x}" y="${y}" width="${ww}" height="${hh}" fill="${o.color||rectColor}" ${tr}/>`;
+    else {const src=o.type==='png'?o.src:o.svg;body+=`<image href="${(src||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;')}" x="${x}" y="${y}" width="${ww}" height="${hh}" preserveAspectRatio="none" ${tr}/>`;}
+  }
+  return 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">${body}</svg>`);
+}
+function makeJson(){
+  return {
+    version:4,id:$('id').value.trim()||'map1',name:$('name').value.trim()||'Unnamed Map',width:W,height:H,cellSize:CELL,
+    background:{type:'color',value:bgColor},rectColor,
+    images:mapImages.map(o=>o.type==='rect'?{id:o.id,type:'rect',x:o.x,y:o.y,w:o.w,h:o.h,baseW:o.baseW||o.w,baseH:o.baseH||o.h,scaleX:o.w/(o.baseW||o.w),scaleY:o.h/(o.baseH||o.h),rotation:o.rotation||0,color:o.color}:{id:o.id,type:o.type==='png'?'png':'svg',x:o.x,y:o.y,w:o.w,h:o.h,baseW:o.baseW||o.w,baseH:o.baseH||o.h,scaleX:o.w/(o.baseW||o.w),scaleY:o.h/(o.baseH||o.h),rotation:o.rotation||0,svg:o.svg||null,src:o.src||null}),
+    thumbnailSvg:thumbSvg||makeThumbnail(),
+    collisionWalls:collisionWalls.map(w=>({id:w.id,x:w.x,y:w.y,w:w.w,h:w.h,baseW:w.baseW||w.w,baseH:w.baseH||w.h,scaleX:w.w/(w.baseW||w.w),scaleY:w.h/(w.baseH||w.h),rotation:w.rotation||0,raycastPass:w.raycast===true,playerPass:w.player===true,bulletPass:w.bullet===true})),
+    spawnPoints:spawnPoints.map(p=>({x:p.x,y:p.y})),zonePoints:zonePoints.map(p=>({x:p.x,y:p.y})),zombiePoints:zombiePoints.map(p=>({x:p.x,y:p.y}))
+  };
+}
+$('export').onclick=()=>{const data=JSON.stringify(makeJson(),null,2),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));a.download=($('id').value.trim()||'map1')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);$('status').textContent='JSON dışa aktarıldı.'};
+$('load').onclick=()=>$('jsonFile').click();
+$('jsonFile').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{loadJson(JSON.parse(r.result));$('status').textContent='JSON yüklendi.'}catch(x){alert('JSON yüklenemedi: '+x.message)}};r.readAsText(f)};
+function loadJson(m){
+  W=clamp(+(m.width||140),MIN_SIZE,MAX_SIZE);H=clamp(+(m.height||140),MIN_SIZE,MAX_SIZE);$('width').value=W;$('height').value=H;$('id').value=m.id||'map1';$('name').value=m.name||'';
+  bgColor=m.background?.type==='color'?(m.background.value||'#15171c'):(m.color||'#15171c');$('bgColor').value=bgColor;
+  rectColor=m.rectColor||'#4b5563';$('color').value=rectColor;thumbSvg=m.thumbnailSvg||null;if(thumbSvg)$('thumbPreview').src=assetSrc(thumbSvg);else $('thumbPreview').removeAttribute('src');
+  mapImages=(m.images||[]).map(o=>({id:o.id||uid('img'),type:o.type==='png'?'png':(o.type==='svg'?'svg':'rect'),x:+o.x||0,y:+o.y||0,w:Math.max(4,+o.w||100),h:Math.max(4,+o.h||100),rotation:+(o.rotation??o.angle??0)||0,baseW:+(o.baseW||o.w)||100,baseH:+(o.baseH||o.h)||100,svg:o.svg||null,src:o.src||null,color:o.color||rectColor}));
+  collisionWalls=(m.collisionWalls||[]).map(w=>({id:w.id||uid('cw'),x:+w.x||0,y:+w.y||0,w:Math.max(4,+w.w||4),h:Math.max(4,+w.h||4),rotation:+(w.rotation??w.angle??0)||0,baseW:+(w.baseW||w.w)||4,baseH:+(w.baseH||w.h)||4,raycast:w.raycastPass===true,player:w.playerPass===true,bullet:w.bulletPass===true}));
+  spawnPoints=(m.spawnPoints||[]).map(p=>({id:uid('sp'),x:+p.x||0,y:+p.y||0}));zonePoints=(m.zonePoints||[]).map(p=>({id:uid('zone'),x:+p.x||0,y:+p.y||0}));zombiePoints=(m.zombiePoints||[]).map(p=>({id:uid('z'),x:+p.x||0,y:+p.y||0}));
+  clampAll();view.x=W*CELL/2;view.y=H*CELL/2;selected=[];dragging=null;draw();syncCollisionPanel();
+}
+
+function drawPoint(p,color,label){const q=worldToCanvas(p.x,p.y);ctx.beginPath();ctx.arc(q.x,q.y,7,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();ctx.font='11px sans-serif';ctx.textAlign='center';ctx.fillStyle='#fff';ctx.fillText(label,q.x,q.y-11)}
+function drawImage(o){
+  const c=objectCenter(o),q=worldToCanvas(c.x,c.y),w=o.w*view.zoom,h=o.h*view.zoom,a=rad(o.rotation||0);
+  ctx.save();ctx.translate(q.x,q.y);ctx.rotate(a);
+  if(o.type==='rect'){ctx.fillStyle=o.color||rectColor;ctx.fillRect(-w/2,-h/2,w,h);ctx.restore();return;}
+  const img=loadImg(o.type==='png'?o.src:o.svg);if(img&&img.complete&&img.naturalWidth)ctx.drawImage(img,-w/2,-h/2,w,h);else{ctx.fillStyle='#555';ctx.fillRect(-w/2,-h/2,w,h)}
+  ctx.restore();
+}
+function drawRotatedRect(o,fill,stroke){
+  const c=objectCenter(o),q=worldToCanvas(c.x,c.y),a=rad(o.rotation||0),w=o.w*view.zoom,h=o.h*view.zoom;
+  ctx.save();ctx.translate(q.x,q.y);ctx.rotate(a);ctx.fillStyle=fill;ctx.fillRect(-w/2,-h/2,w,h);ctx.strokeStyle=stroke;ctx.lineWidth=1.5;ctx.strokeRect(-w/2+.5,-h/2+.5,Math.max(0,w-1),Math.max(0,h-1));ctx.restore();
+}
+function drawSelectionRect(o){
+  const pts=rotatedCorners(o).map(q=>worldToCanvas(q.x,q.y));ctx.save();ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i].x,pts[i].y);ctx.closePath();ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;ctx.stroke();
+  if(selectedList().length===1){
+    for(const h of handlesForRect(o)){const s=worldToCanvas(h.x,h.y);if(h.id==='rot'){ctx.beginPath();ctx.arc(s.x,s.y,6,0,Math.PI*2);ctx.fillStyle='#ff8f00';ctx.fill();ctx.strokeStyle='#fff';ctx.stroke();}else{ctx.fillStyle='#ffd54f';ctx.fillRect(s.x-5,s.y-5,10,10);}}
+    const top=worldToCanvas(localToWorld(o,{x:0,y:-o.h/2}));const rot=worldToCanvas(localToWorld(o,{x:0,y:-o.h/2-34}));ctx.strokeStyle='#ffd54f';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(top.x,top.y);ctx.lineTo(rot.x,rot.y);ctx.stroke();
+  }
+  ctx.restore();
+}
+function draw(){
+  ctx.imageSmoothingEnabled=false;
+  ctx.clearRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#080a0e';ctx.fillRect(0,0,canvas.width,canvas.height);
+  const sr=screenRect();
+  ctx.save();ctx.beginPath();ctx.rect(sr.x,sr.y,sr.w,sr.h);ctx.clip();
+  ctx.fillStyle=bgColor;ctx.fillRect(sr.x,sr.y,sr.w,sr.h);
+  for(const o of mapImages)drawImage(o);
+  if(showCollisions)for(const w of collisionWalls){drawRotatedRect(w,'rgba(80,88,104,.65)','rgba(255,213,79,.9)');}
+  ctx.restore();
+  ctx.strokeStyle='#ff5252';ctx.lineWidth=2;ctx.strokeRect(sr.x,sr.y,sr.w,sr.h);
+  const hs=[{x:sr.x,y:sr.y+sr.h/2},{x:sr.x+sr.w,y:sr.y+sr.h/2},{x:sr.x+sr.w/2,y:sr.y},{x:sr.x+sr.w/2,y:sr.y+sr.h}];
+  ctx.fillStyle='#ff5252';for(const h of hs)ctx.fillRect(h.x-6,h.y-6,12,12);
+  for(const p of spawnPoints)drawPoint(p,'#42a5f5','S');for(const p of zonePoints)drawPoint(p,'#ffca28','A');for(const p of zombiePoints)drawPoint(p,'#66bb6a','Z');
+  if(dragging?.kind==='newWall'){const x=Math.min(dragging.x0,dragging.x1),y=Math.min(dragging.y0,dragging.y1),w=Math.abs(dragging.x1-dragging.x0),h=Math.abs(dragging.y1-dragging.y0),q=worldToCanvas(x,y);ctx.fillStyle='#ffffff44';ctx.fillRect(q.x,q.y,w*view.zoom,h*view.zoom);ctx.strokeStyle='#fff';ctx.strokeRect(q.x,q.y,w*view.zoom,h*view.zoom)}
+  for(const sel of selectedList()){
+    const o=getObject(sel.type,sel.id);if(!o)continue;
+    if('w' in o && (sel.type==='image'||sel.type==='wall')){
+      if(sel.type==='wall'&&!showCollisions) drawRotatedRect(o,'rgba(255,213,79,.12)','rgba(255,213,79,.95)');
+      drawSelectionRect(o);
+    }else{
+      const q=worldToCanvas(o.x,o.y);ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;ctx.beginPath();ctx.arc(q.x,q.y,11,0,Math.PI*2);ctx.stroke();
+    }
+  }
+  if(dragging?.kind==='marquee'){const x=Math.min(dragging.x0,dragging.x1),y=Math.min(dragging.y0,dragging.y1),w=Math.abs(dragging.x1-dragging.x0),h=Math.abs(dragging.y1-dragging.y0),q=worldToCanvas(x,y);ctx.fillStyle='#42a5f522';ctx.fillRect(q.x,q.y,w*view.zoom,h*view.zoom);ctx.strokeStyle='#42a5f5';ctx.setLineDash([6,4]);ctx.strokeRect(q.x,q.y,w*view.zoom,h*view.zoom);ctx.setLineDash([])}
+  $('viewInfo').textContent=Math.round(view.zoom*100)+'% • '+W+'×'+H+' hücre';
+}
+
+setTool('select');$('width').value=W;$('height').value=H;resizeCanvas();
+
+</script>
+</body>
+</html>

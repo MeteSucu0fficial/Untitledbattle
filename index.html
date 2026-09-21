@@ -26,6 +26,13 @@
   .bigBtn:hover { filter:brightness(1.15); transform:translateY(-1px); }
   .bigBtn:disabled { opacity:.4; cursor:not-allowed; transform:none; }
   #lobbyBox { display:none; width:400px; }
+  #mapSelectBox { color:#eee; }
+  #mapGrid .mapCard { cursor:pointer; border:2px solid #333; border-radius:10px; padding:8px; background:#101218; transition:.15s; }
+  #mapGrid .mapCard:hover { transform:translateY(-2px); border-color:#888; }
+  #mapGrid .mapCard.selected { border-color:#ff5252; box-shadow:0 0 16px #ff525244; }
+  #mapGrid .mapThumb{width:100%;height:120px;border-radius:7px;overflow:hidden;background:#0d0f14;display:flex;align-items:center;justify-content:center;margin-bottom:7px;}
+  #mapGrid .mapThumb img{width:100%;height:100%;object-fit:contain;display:block;}
+  #mapGrid .mapThumbFallback{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:38px;}
   #lobbyBox h3 { margin:0 0 12px 0; color:#aac; font-size:14px; letter-spacing:2px; text-transform:uppercase; }
   #playerList { max-height:220px; overflow-y:auto; margin-bottom:16px; }
   .plRow { display:flex; align-items:center; justify-content:space-between; padding:8px 10px; margin-bottom:6px;
@@ -98,7 +105,7 @@
   width:100%;
   height:100%;
   pointer-events:none;
-  z-index:10;
+  z-index:-1;
 }
   /* ---------- SPECTATE / DEATH ---------- */
   #deathBanner { position:fixed; top:0; left:0; right:0; background:linear-gradient(180deg, rgba(120,10,10,.55), transparent);
@@ -131,12 +138,19 @@
   <div class="sub">P2P TAKTİKSEL SAVAŞ ARENASI</div>
   <div id="loginBox">
     <input id="usernameInput" type="text" placeholder="Adını yaz..." maxlength="14">
-    <button class="bigBtn" onclick="joinLobby()">ARENAYA KATIL</button>
+    <button class="bigBtn" onclick="showMapSelection()">DEVAM ET</button>
+  </div>
+  <div id="mapSelectBox" style="display:none;width:min(900px,92vw);max-height:78vh;overflow:auto;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:20px;">
+    <h3 style="margin:0 0 12px;color:#fff">HARİTA SEÇ</h3>
+    <div id="mapGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px"></div>
+    <div id="mapSelectionStatus" style="text-align:center;color:#ffd54f;font-weight:700;margin-top:12px;min-height:20px">Henüz harita seçilmedi</div>
+    <button class="bigBtn" id="mapJoinBtn" style="margin-top:14px" onclick="joinLobby()" disabled>HARİTA SEÇ</button>
   </div>
   <div id="lobbyBox">
-    <h3>Lobi</h3>
+    <h3>Lobi • Harita oylaması</h3>
+    <div id="selectedMapName" style="text-align:center;color:#ffd54f;margin-bottom:10px"></div>
     <div id="playerList"></div>
-    <button class="bigBtn" id="readyBtn" onclick="toggleReady()">HAZIRIM</button>
+    <button class="bigBtn" id="readyBtn" onclick="toggleReady()">BAŞLATMA OYU</button>
     <div id="lobbyStatus"></div>
     <div id="countdownNum"></div>
   </div>
@@ -170,6 +184,10 @@
   <canvas id="airstrikeCanvas" width="560" height="560"></canvas>
   <div id="airstrikeHint">Hedefi seçmek için tıkla — HAVA SALDIRISI</div>
 </div>
+<div id="laserOverlay" style="position:fixed;inset:0;background:rgba(5,5,8,.94);z-index:61;display:none;align-items:center;justify-content:center;flex-direction:column">
+  <canvas id="laserCanvas" width="900" height="700" style="width:min(92vw,900px);height:min(78vh,700px);border:2px solid #ff5252;border-radius:8px;cursor:crosshair"></canvas>
+  <div style="color:#ff8a80;margin-top:12px;font-size:13px">Haritada iki nokta seç. Bu iki noktadan geçen lazer tüm harita boyunca 10 saniye açık kalır.</div>
+</div>
 
 <!-- WIN SCREEN -->
 <div id="winBanner">
@@ -182,32 +200,36 @@
 /* =====================================================================================
    ARENA ROYALE — P2P Top-Down Tactical Battle Royale
    Tek dosya HTML/JS/CSS. PeerJS ile mesh P2P networking (sunucu yok).
-   Sprite/asset desteği: /assets/item_<tip>.png (32x32) koyarsan otomatik kullanılır,
-   yoksa emoji ikon ile devam eder. Aşağıdaki ITEM_ICONS listesindeki isimlerle kaydet:
-   assets/item_energy.png, item_wall.png, item_medkit.png, item_apple.png,
-   item_bomb.png, item_teleport.png, item_airstrike.png, item_orb.png, item_trap.png, item_bag.png
+   Eşya sprite'ları yalnızca SVG olarak aranır. Her sprite için yalnızca BİR yükleme
+   denemesi yapılır; bulunamazsa o eşya emoji ile çizilir ve tekrar aranmaz.
+   Duvar ve zemin texture kullanmaz.
    ===================================================================================== */
 
 // ---------------------------------------------------------------------------
 // CONFIG
 // ---------------------------------------------------------------------------
 const CELL = 48;
-const GRID_W = 140, GRID_H = 140; // 2x width * 2x height = 4x total map area
-const WORLD_W = GRID_W*CELL, WORLD_H = GRID_H*CELL;
+let GRID_W = 140, GRID_H = 140;
+let WORLD_W = GRID_W*CELL, WORLD_H = GRID_H*CELL;
 const ROOM_ID = "ARENA_ROYALE_LOBBY_V1_";
 const MAX_SLOT = 12;
 const PLAYER_RADIUS = 16;
 const VIEW_DIST = 820;
 const RAY_COUNT = 130;
 
-const ITEM_ICONS = { energy:'⚡', wall:'🧱', medkit:'💉', apple:'🍎', bomb:'💣', teleport:'🌀', airstrike:'🚀', orb:'🔮', trap:'🪤', bag:'🎒' };
-const ITEM_NAMES = { energy:'Enerji İçeceği', wall:'Duvar', medkit:'Medkit', apple:'Elma', bomb:'Bomba', teleport:'Teleporter', airstrike:'Hava Saldırısı', orb:'Sihirli Küre', trap:'Tuzak', bag:'Çanta' };
+const ITEM_ICONS = { energy:'⚡', wall:'🧱', medkit:'💉', apple:'🍎', bomb:'💣', teleport:'🌀', airstrike:'🚀', orb:'🔮', trap:'🪤', bag:'🎒', groundbomb:'💥', laser:'🔴' };
+const ITEM_NAMES = { energy:'Enerji İçeceği', wall:'Duvar', medkit:'Medkit', apple:'Elma', bomb:'Bomba', teleport:'Teleporter', airstrike:'Hava Saldırısı', orb:'Sihirli Küre', trap:'Tuzak', bag:'Çanta', groundbomb:'Yer Bombası', laser:'Lazer' };
 const ITEM_IMAGES = {};
+const ITEM_IMAGE_FAILED = new Set();
 Object.keys(ITEM_ICONS).forEach(k=>{
   const img = new Image();
   img.onload = ()=>{ ITEM_IMAGES[k]=img; };
-  img.onerror = ()=>{};
-  img.src = `assets/item_${k}.png`;
+  img.onerror = ()=>{
+    // Tek deneme: SVG bulunamazsa emoji fallback kullanılır. PNG'ye veya başka
+    // bir dosyaya tekrar istek gönderilmez.
+    ITEM_IMAGE_FAILED.add(k);
+  };
+  img.src = `assets/item_${k}.svg`;
 });
 
 // ---------------------------------------------------------------------------
@@ -224,60 +246,48 @@ function makeRng(seed){
 }
 
 // ---------------------------------------------------------------------------
-// MAP GENERATION (fixed seed -> identical map for every client, no sync needed)
+// MAP DATA (loaded only from /maps/*.json)
 // ---------------------------------------------------------------------------
-let grid = []; // 1 = wall (unbreakable), 0 = floor
-function genMap(){
-  const rng = makeRng(133742);
-  grid = new Array(GRID_W*GRID_H).fill(1);
-  const idx = (x,y)=> y*GRID_W+x;
-  const carveRect = (x,y,w,h)=>{
-    for(let yy=y; yy<y+h; yy++) for(let xx=x; xx<x+w; xx++){
-      if(xx>0 && yy>0 && xx<GRID_W-1 && yy<GRID_H-1) grid[idx(xx,yy)] = 0;
-    }
-  };
-  const rooms = [];
-  const numRooms = 34*4; // scaled up with the 4x larger map area to keep room density similar
-  for(let i=0;i<numRooms;i++){
-    const w = 4 + Math.floor(rng()*7);
-    const h = 4 + Math.floor(rng()*7);
-    const x = 2 + Math.floor(rng()*(GRID_W-w-4));
-    const y = 2 + Math.floor(rng()*(GRID_H-h-4));
-    carveRect(x,y,w,h);
-    rooms.push({cx:Math.floor(x+w/2), cy:Math.floor(y+h/2)});
-  }
-  // connect rooms sequentially (shuffled) with L-shaped corridors, width 2
-  const order = [...rooms].sort(()=>rng()-0.5);
-  for(let i=1;i<order.length;i++){
-    const a = order[i-1], b = order[i];
-    let x = a.cx, y = a.cy;
-    while(x !== b.cx){ carveRect(Math.min(x,x+(b.cx>x?1:-1)), y, 2, 2); x += (b.cx>x?1:-1); }
-    while(y !== b.cy){ carveRect(x, Math.min(y,y+(b.cy>y?1:-1)), 2, 2); y += (b.cy>y?1:-1); }
-  }
-  // scatter a few internal cover blocks
-  for(let i=0;i<40*4;i++){
-    const x = 3+Math.floor(rng()*(GRID_W-6));
-    const y = 3+Math.floor(rng()*(GRID_H-6));
-    if(grid[idx(x,y)]===0 && rng()<0.35){
-      const w = 1+Math.floor(rng()*2), h=1+Math.floor(rng()*2);
-      // only place if it doesn't fully block (leave it small, isolated)
-      let free=true;
-      for(let yy=y;yy<y+h+1 && free;yy++) for(let xx=x;xx<x+w+1 && free;xx++){ if(grid[idx(xx,yy)]===1) free=false; }
-      if(free) for(let yy=y;yy<y+h;yy++) for(let xx=x;xx<x+w;xx++) grid[idx(xx,yy)]=1;
-    }
-  }
-}
-function isWallCell(gx,gy){
-  if(gx<0||gy<0||gx>=GRID_W||gy>=GRID_H) return true;
-  return grid[gy*GRID_W+gx] === 1;
-}
-function isFloorAt(x,y){ return !isWallCell(Math.floor(x/CELL), Math.floor(y/CELL)); }
+let grid = []; // legacy compatibility; new maps use collisionWalls instead
+let collisionWalls = []; // {id,x,y,w,h,raycast,player,bullet}
+let mapImages = []; // {id,type:'svg'|'rect',x,y,w,h,svg,color}
+let mapImage = null;
+let mapBackgroundColor = '#15171c';
+let currentMap = null;
+let selectedMapId = null;
+let availableMaps = [];
 
-// spawn points: farthest-point sampling over floor cells
+function isWallCell(gx,gy){
+  return gx<0||gy<0||gx>=GRID_W||gy>=GRID_H;
+}
+function isFloorAt(x,y){ return x>=0&&y>=0&&x<=WORLD_W&&y<=WORLD_H && !pointInAnyCollision(x,y,'player'); }
+function degToRad(a){ return (a||0)*Math.PI/180; }
+function rectCenter(r){ return {x:r.x+r.w/2,y:r.y+r.h/2}; }
+function rectToLocal(r,x,y){
+  const c=rectCenter(r),a=degToRad(r.rotation||0),ca=Math.cos(a),sa=Math.sin(a);
+  const dx=x-c.x,dy=y-c.y;
+  return {x:dx*ca+dy*sa,y:-dx*sa+dy*ca};
+}
+function rectToWorld(r,x,y){
+  const c=rectCenter(r),a=degToRad(r.rotation||0),ca=Math.cos(a),sa=Math.sin(a);
+  return {x:c.x+x*ca-y*sa,y:c.y+x*sa+y*ca};
+}
+function rectCorners(r){
+  return [
+    rectToWorld(r,-r.w/2,-r.h/2),rectToWorld(r,r.w/2,-r.h/2),
+    rectToWorld(r,r.w/2,r.h/2),rectToWorld(r,-r.w/2,r.h/2)
+  ];
+}
+function rectContainsPoint(r,x,y){ const q=rectToLocal(r,x,y); return Math.abs(q.x)<=r.w/2 && Math.abs(q.y)<=r.h/2; }
+function pointInAnyCollision(x,y,kind='player'){ return collisionWalls.some(w=>w[kind] && rectContainsPoint(w,x,y)); }
+
+// Spawn noktaları JSON'da varsa doğrudan kullanılır; yoksa yalnızca o JSON'un
+// grid'inden güvenli varsayılan noktalar üretilir. Haritanın kendisi kodda yoktur.
 let spawnPoints = [];
 function genSpawnPoints(){
   const floors = [];
-  for(let y=1;y<GRID_H-1;y++) for(let x=1;x<GRID_W-1;x++) if(grid[y*GRID_W+x]===0) floors.push({x:x*CELL+CELL/2, y:y*CELL+CELL/2});
+  for(let y=1;y<GRID_H-1;y++) for(let x=1;x<GRID_W-1;x++)
+    if(grid[y*GRID_W+x]===0) floors.push({x:x*CELL+CELL/2, y:y*CELL+CELL/2});
   spawnPoints = [];
   if(!floors.length) return;
   let cur = floors[Math.floor(floors.length/2)];
@@ -288,14 +298,97 @@ function genSpawnPoints(){
     for(let i=0;i<floors.length;i++){
       if(chosen.has(i)) continue;
       let minD = Infinity;
-      for(const sp of spawnPoints){ const d=(floors[i].x-sp.x)**2+(floors[i].y-sp.y)**2; if(d<minD) minD=d; }
+      for(const sp of spawnPoints){
+        const d=(floors[i].x-sp.x)**2+(floors[i].y-sp.y)**2;
+        if(d<minD) minD=d;
+      }
       if(minD>bestD){ bestD=minD; best=floors[i]; bestI=i; }
     }
     if(best){ spawnPoints.push(best); chosen.add(bestI); }
   }
 }
-genMap();
-genSpawnPoints();
+
+async function loadMapFile(mapId){
+  try{
+    const r = await fetch(`maps/${encodeURIComponent(mapId)}.json?${Date.now()}`, {cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const m = await r.json();
+    if(!m.width || !m.height || m.width<1 || m.height<1) throw new Error('Geçersiz harita boyutu');
+
+    currentMap = m;
+    GRID_W = Math.max(1, Math.floor(m.width));
+    GRID_H = Math.max(1, Math.floor(m.height));
+    WORLD_W = GRID_W*CELL;
+    WORLD_H = GRID_H*CELL;
+    grid = Array(GRID_W*GRID_H).fill(0);
+    collisionWalls = Array.isArray(m.collisionWalls) ? m.collisionWalls.map(w=>({
+      id:w.id||('cw_'+Math.random().toString(36).slice(2)),
+      x:+w.x||0, y:+w.y||0, w:Math.max(1,+w.w||1), h:Math.max(1,+w.h||1),
+      rotation:+(w.rotation??w.angle??0)||0,
+      raycast:w.raycastPass!==true, player:w.playerPass!==true, bullet:w.bulletPass!==true
+    })) : [];
+
+    mapImages = Array.isArray(m.images) ? m.images.map(o=>({
+      id:o.id||('img_'+Math.random().toString(36).slice(2)), type:o.type==='png'?'png':(o.type==='svg'?'svg':'rect'),
+      x:+o.x||0,y:+o.y||0,w:Math.max(1,+o.w||1),h:Math.max(1,+o.h||1),
+      rotation:+(o.rotation??o.angle??0)||0,
+      svg:o.svg||null,src:o.src||null,color:o.color||mapBackgroundColor
+    })) : [];
+
+    genSpawnPoints();
+    if(Array.isArray(m.spawnPoints) && m.spawnPoints.length) spawnPoints=m.spawnPoints.map(p=>({...p}));
+    const zp = Array.isArray(m.zonePoints) && m.zonePoints.length ? m.zonePoints[0] : (m.zoneCenter || null);
+    zoneCenter = zp ? {x:+zp.x||WORLD_W/2,y:+zp.y||WORLD_H/2} : {x:WORLD_W/2,y:WORLD_H/2};
+    mapBackgroundColor = m.background?.type==='color' ? (m.background.value||m.color||'#15171c') : (m.color||'#15171c');
+    mapImage = null;
+    // Eski JSON'lar için: background SVG varsa yeni image sistemine tam harita görseli olarak aktar.
+    const legacySvg = m.background?.type==='svg' ? (m.background.svg||m.background.value||null) : null;
+    if(legacySvg && !mapImages.length) mapImages.push({id:'legacy_background',type:'svg',x:0,y:0,w:WORLD_W,h:WORLD_H,svg:legacySvg,color:null});
+    if(mapImages.length){
+      for(const o of mapImages){
+        if((o.type==='svg' && o.svg) || (o.type==='png' && o.src)){
+          const src=assetSrc(o.type==='png'?o.src:o.svg);
+          if(src){ const img=new Image(); img.src=src; o._img=img; }
+        }
+      }
+      await Promise.all(mapImages.filter(o=>o._img).map(o=>new Promise(resolve=>{o._img.onload=resolve;o._img.onerror=resolve;})));
+    }
+    zoneStartRadius = Math.hypot(WORLD_W,WORLD_H)/2*1.05;
+    return true;
+  }catch(err){
+    console.warn('Harita yüklenemedi:', mapId, err);
+    return false;
+  }
+}
+
+// Haritalar map1, map2, map3... şeklinde ardışık aranır.
+// Bir numara eksikse arama O ANDA kesilir; sonraki numaralara bakılmaz.
+async function loadAvailableMaps(){
+  availableMaps=[];
+  for(let i=1;i<=30;i++){
+    try{
+      const r=await fetch(`maps/map${i}.json?${Date.now()}`,{cache:'no-store'});
+      if(!r.ok) break;
+      const m=await r.json();
+      if((!m.collisionWalls && !m.grid) || !m.width || !m.height) break;
+      availableMaps.push(m);
+    }catch(e){
+      break;
+    }
+  }
+
+  // Kodun içinde gömülü harita yok. map1.json bile bulunamazsa seçim ekranı
+  // boş kalır ve oyun başlatılamaz.
+  if(availableMaps.length){
+    if(!selectedMapId || !availableMaps.some(m=>m.id===selectedMapId)) selectedMapId=availableMaps[0].id;
+    if(!currentMap || !availableMaps.some(m=>m.id===currentMap.id)) currentMap=availableMaps.find(m=>m.id===selectedMapId)||availableMaps[0];
+  }else{
+    currentMap=null;
+    grid=[];
+    spawnPoints=[];
+  }
+  renderMapSelection();
+}
 
 // special (player-placed) walls
 let walls = []; // {id,x,y,angle,hp,maxHp}
@@ -338,9 +431,14 @@ let localTraps = []; // traps are private to the player who placed them
 let trapCooldownUntil = 0;
 let trapBlindUntil = 0;
 let trapLockUntil = 0;
+let trapWarnings = [];
 let trapZoom = 1;
 let mapOpen = false;
+let laserTargeting = false;
+let laserPoints = [];
 let airstrikeUsedCount = 0;
+let groundBombs = []; // {id,x,y,ownerId,armed}
+let lasers = []; // {id,x1,y1,x2,y2,t0,t1,ownerId}
 let orbUsedCount = 0;
 let killFeedList = [];
 let nextIdCounter = 1;
@@ -359,12 +457,12 @@ let camera = {x:0,y:0};
 
 // zone
 const ZONE_PHASES = [
-  {wait:8, dur:22, frac:0.72},
-  {wait:7, dur:20, frac:0.50},
-  {wait:6, dur:18, frac:0.32},
-  {wait:6, dur:16, frac:0.18},
-  {wait:5, dur:14, frac:0.08},
-  {wait:5, dur:10, frac:0.0},
+  {wait:16, dur:45, frac:0.72},
+  {wait:13, dur:40, frac:0.50},
+  {wait:11, dur:36, frac:0.32},
+  {wait:10, dur:32, frac:0.18},
+  {wait:9, dur:28, frac:0.08},
+  {wait:8, dur:20, frac:0.0},
 ];
 let zoneCenter = {x:WORLD_W/2, y:WORLD_H/2};
 // start radius covers the map's full diagonal (+5% margin), so the whole map is inside
@@ -396,32 +494,87 @@ const actx = airstrikeCanvas.getContext('2d');
 // ---------------------------------------------------------------------------
 // NETWORKING
 // ---------------------------------------------------------------------------
-function broadcast(msg){ conns.forEach(c=>{ try{ c.send(msg); }catch(e){} }); }
+function broadcast(msg){
+  const groupMap = (matchState==='playing'||matchState==='spectating') ? (players[myId]?.votedMap||currentMap?.id) : null;
+  conns.forEach(c=>{ try{ if(!groupMap || players[c.peer]?.votedMap===groupMap) c.send(msg); }catch(e){} });
+}
+function broadcastToMap(msg, mapId=currentMap?.id){ conns.forEach(c=>{ try{ if(!mapId || players[c.peer]?.votedMap===mapId) c.send(msg); }catch(e){} }); }
 function sendTo(id, msg){ const c = conns.find(x=>x.peer===id); if(c) try{ c.send(msg); }catch(e){} }
 
-function joinLobby(){
+function showMapSelection(){
   const name = document.getElementById('usernameInput').value.trim();
   if(!name){ alert('Bir isim gir!'); return; }
-  myName = name.slice(0,14);
+  myName=name.slice(0,14);
   document.getElementById('loginBox').style.display='none';
+  document.getElementById('mapSelectBox').style.display='block';
+  if(!availableMaps.length) loadAvailableMaps().then(renderMapSelection); else renderMapSelection();
+}
+function assetSrc(v){
+  if(!v) return null;
+  if(/^data:image\//.test(v) || /^https?:\/\//.test(v)) return v;
+  if(/^assets\/.*\.svg(?:$|\?)/i.test(v)) return v;
+  // Editörden gelen ham SVG metnini JSON içinde data URI olarak gösterebil.
+  if(/^<svg[\s>]/i.test(v.trim())) return 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(v);
+  return null;
+}
+function renderMapSelection(){
+  const wrap=document.getElementById('mapGrid'); if(!wrap) return;
+  wrap.innerHTML='';
+  availableMaps.forEach(m=>{
+    const card=document.createElement('div');
+    card.className='mapCard'+(selectedMapId===m.id?' selected':'');
+    card.onclick=()=>{
+      selectedMapId=m.id;
+      const picked=availableMaps.find(x=>x.id===selectedMapId);
+      document.getElementById('mapSelectionStatus').textContent=`Seçilen harita: ${picked?.name||selectedMapId}`;
+      const btn=document.getElementById('mapJoinBtn');
+      btn.disabled=false; btn.textContent=`${picked?.name||selectedMapId} İLE LOBİYE GİR`;
+      renderMapSelection();
+    };
+    card.setAttribute('role','button');
+    card.tabIndex=0;
+    card.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); card.click(); } };
+    const media=assetSrc(m.thumbnailSvg||null);
+    const thumb=document.createElement('div'); thumb.className='mapThumb';
+    if(media){ const img=document.createElement('img'); img.src=media; img.alt=m.name||m.id; img.draggable=false; thumb.appendChild(img); }
+    else { const fallback=document.createElement('div'); fallback.className='mapThumbFallback'; fallback.style.background=m.color||'#15171c'; fallback.textContent='🗺️'; thumb.appendChild(fallback); }
+    card.appendChild(thumb);
+    const title=document.createElement('div'); title.textContent=m.name||m.id; title.style='font-weight:700;text-align:center;padding:4px';
+    card.appendChild(title); wrap.appendChild(card);
+  });
+  const picked=availableMaps.find(x=>x.id===selectedMapId);
+  const status=document.getElementById('mapSelectionStatus');
+  const btn=document.getElementById('mapJoinBtn');
+  if(picked){
+    status.textContent=`Seçilen harita: ${picked.name||picked.id}`;
+    btn.disabled=false; btn.textContent=`${picked.name||picked.id} İLE LOBİYE GİR`;
+  }else{
+    status.textContent='Henüz harita seçilmedi';
+    btn.disabled=true; btn.textContent='HARİTA SEÇ';
+  }
+}
+function joinLobby(){
+  if(!myName) myName=document.getElementById('usernameInput').value.trim().slice(0,14);
+  if(!myName || !selectedMapId){ alert('İsim ve harita seçmelisin.'); return; }
+  currentMap = availableMaps.find(m=>m.id===selectedMapId);
+  if(!currentMap){ alert('Harita bulunamadı.'); return; }
+  document.getElementById('mapSelectBox').style.display='none';
   document.getElementById('lobbyBox').style.display='block';
   matchState = 'lobby';
-
+  document.getElementById('selectedMapName').textContent=`Seçtiğin harita: ${currentMap.name||currentMap.id}`;
   mySlot = Math.floor(Math.random()*MAX_SLOT)+1;
   myId = ROOM_ID + mySlot;
   peer = new Peer(myId, { debug:0 });
-
   players[myId] = { id:myId, name:myName, x:0,y:0, angle:0, hp:100, alive:false, speedUntil:0,
-    ready:false, inGameAlready:false, color: COLORS[mySlot % COLORS.length], slot:mySlot };
-
+    ready:false, inGameAlready:false, color: COLORS[mySlot % COLORS.length], slot:mySlot, votedMap:selectedMapId };
   peer.on('open', ()=>{
     for(let i=1;i<=MAX_SLOT;i++){ if(i!==mySlot) tryConnect(ROOM_ID+i); }
     updateLobbyUI();
+    broadcast({t:'map_vote', mapId:currentMap.id});
   });
   peer.on('connection', c=> setupConn(c));
-  peer.on('error', (e)=>{ /* slot taken or peer offline - ignore, mesh keeps trying others */ });
+  peer.on('error', ()=>{});
 }
-
 function tryConnect(id){
   try{
     const c = peer.connect(id, {reliable:true});
@@ -433,9 +586,9 @@ function setupConn(c){
   if(conns.find(x=>x.peer===c.peer)) return;
   c.on('open', ()=>{
     if(!conns.find(x=>x.peer===c.peer)) conns.push(c);
-    c.send({t:'hello', name:myName, slot:mySlot, ready: players[myId].ready, inGame: matchState==='playing'||matchState==='spectating'});
-    if(matchState==='playing' || matchState==='spectating'){
-      // late-join info sent already via hello.inGame; requester will auto-spectate
+    c.send({t:'hello', name:myName, slot:mySlot, ready: players[myId].ready, inGame: matchState==='playing'||matchState==='spectating', votedMap: players[myId]?.votedMap||selectedMapId});
+    if((matchState==='playing' || matchState==='spectating') && players[c.peer]?.votedMap===currentMap?.id){
+      // late-join info sent only to players in the same map game
       c.send({t:'sync_state', matchStartTs: matchState==='playing'||matchState==='spectating' ? (performance.now()-matchStartTs) : null, seed: mapSeed,
         walls: walls.map(w=>({id:w.id,x:w.x,y:w.y,angle:w.angle,hp:w.hp,maxHp:w.maxHp})),
         portal: teleportBeacon ? {...teleportBeacon} : null });
@@ -455,19 +608,25 @@ function handleData(c, d){
   switch(d.t){
     case 'hello': {
       if(!players[from]) players[from] = { id:from, name:d.name, x:0,y:0, angle:0, hp:100, alive:false, speedUntil:0,
-        ready:d.ready, inGameAlready:d.inGame, color: COLORS[(d.slot||0)%COLORS.length], slot:d.slot };
-      else { players[from].name = d.name; players[from].ready = d.ready; }
+        ready:d.ready, votedMap:d.votedMap||null, inGameAlready:d.inGame, color: COLORS[(d.slot||0)%COLORS.length], slot:d.slot };
+      else { players[from].name = d.name; players[from].ready = d.ready; if(d.votedMap) players[from].votedMap=d.votedMap; }
       if(d.inGame && matchState==='lobby'){ /* game already started elsewhere, we'll receive sync_state */ }
       updateLobbyUI();
       checkAllReady();
       break;
     }
     case 'ready': { if(players[from]){ players[from].ready = d.ready; updateLobbyUI(); checkAllReady(); } break; }
+    case 'map_vote': { if(players[from]){ players[from].votedMap=d.mapId; updateLobbyUI(); checkAllReady(); } break; }
     case 'game_start': {
       mapSeed = d.seed;
-      itemsRng = makeRng(mapSeed);
-      matchStartTs = performance.now() - (d.elapsed||0);
-      startMatchLocal(d.elapsed||0);
+      const begin=async()=>{
+        Object.values(players).forEach(p=>{ if(p.votedMap===d.mapId) p.inGameAlready=true; });
+        if(d.mapId){ await loadMapFile(d.mapId); currentMap=availableMaps.find(m=>m.id===d.mapId)||currentMap; }
+        itemsRng = makeRng(mapSeed);
+        matchStartTs = performance.now() - (d.elapsed||0);
+        startMatchLocal(d.elapsed||0);
+      };
+      begin();
       break;
     }
     case 'sync_state': {
@@ -514,6 +673,8 @@ function handleData(c, d){
       break;
     }
     case 'explosion': {
+      // Uzak bir oyuncunun patlaması da bu istemcideki yer bombalarını zincirleyebilir.
+      triggerNearbyGroundBombs(d.x,d.y,d.radius+35);
       spawnExplosionFX(d.x,d.y,d.radius);
       checkSelfExplosionDamage(d.x,d.y,d.radius,d.dmg,from);
       applyWallExplosionDamageLocal(d.x,d.y,d.radius,d.wallDmg,true); // visual only (owner already told us via wall_damage)
@@ -539,7 +700,24 @@ function handleData(c, d){
       if(teleportBeacon && teleportBeacon.ownerId===from) teleportBeacon=null;
       break;
     }
+    case 'groundbomb_place': {
+      if(!groundBombs.find(x=>x.id===d.id)) groundBombs.push({id:d.id,x:d.x,y:d.y,ownerId:d.ownerId||from,armed:true});
+      break;
+    }
+    case 'groundbomb_trigger': {
+      groundBombs=groundBombs.filter(x=>x.id!==d.id);
+      spawnExplosionFX(d.x,d.y,115);
+      checkSelfExplosionDamage(d.x,d.y,115,55,from);
+      break;
+    }
+    case 'laser_start': {
+      lasers=lasers.filter(l=>l.id!==d.id);
+      lasers.push({id:d.id,x1:d.x1,y1:d.y1,x2:d.x2,y2:d.y2,t0:performance.now(),t1:performance.now()+10000,ownerId:from});
+      spawnNotif(`🔴 ${players[from]?.name||'Bir oyuncu'} lazer açtı`);
+      break;
+    }
     case 'trap_triggered': {
+      trapWarnings.push({x:d.x,y:d.y,t0:performance.now()});
       const victim = players[d.victimId];
       if(victim) victim._trapHitTs = performance.now();
       if(d.victimId===myId) applyTrapEffect(d.dmg||35, from);
@@ -566,22 +744,30 @@ function toggleReady(){
   updateLobbyUI();
   checkAllReady();
 }
+function getLobbyGroup(mapId=players[myId]?.votedMap||selectedMapId){
+  return Object.values(players).filter(p=>!p.disconnected && !p.inGameAlready && (p.votedMap||null)===mapId);
+}
 function updateLobbyUI(){
   const list = document.getElementById('playerList');
   list.innerHTML = '';
-  const all = Object.values(players).filter(p=>!p.disconnected);
-  all.forEach(p=>{
+  const myMapId=players[myId]?.votedMap||selectedMapId;
+  const group = getLobbyGroup(myMapId);
+  group.forEach(p=>{
     const row = document.createElement('div'); row.className='plRow';
     row.innerHTML = `<span class="nm" style="color:${p.color}">${p.name}${p.id===myId?' (Sen)':''}</span>
       <span class="rd ${p.ready?'yes':'no'}">${p.ready?'HAZIR':'BEKLİYOR'}</span>`;
     list.appendChild(row);
   });
-  document.getElementById('lobbyStatus').textContent = `${all.length} oyuncu bağlı — en az 2 oyuncu ve herkesin hazır olması gerek`;
+  const other = Object.values(players).filter(p=>!p.disconnected && !p.inGameAlready && (p.votedMap||null)!==myMapId);
+  const mapName=currentMap?.name||myMapId||'Bilinmiyor';
+  document.getElementById('lobbyStatus').textContent = `${group.length} oyuncu bu oyunda • ${mapName} • ${other.length} oyuncu başka haritada${group.length<2?' • En az 2 oyuncu gerekli':''}`;
+  document.getElementById('selectedMapName').textContent=`Seçtiğin harita: ${mapName} • Başlatma oyu: ${players[myId]?.ready?'VERDİN ✓':'VER'}`;
 }
 let countdownTimer = null, countdownVal = 0;
 function checkAllReady(){
-  const all = Object.values(players).filter(p=>!p.disconnected);
-  const allReady = all.length>=2 && all.every(p=>p.ready);
+  const myMapId=players[myId]?.votedMap||selectedMapId;
+  const group=getLobbyGroup(myMapId);
+  const allReady = group.length>=2 && group.every(p=>p.ready) && group.every(p=>!!p.votedMap);
   if(allReady && matchState==='lobby' && !countdownTimer){
     countdownVal = 3;
     document.getElementById('countdownNum').textContent = countdownVal;
@@ -590,35 +776,35 @@ function checkAllReady(){
       if(countdownVal<=0){
         clearInterval(countdownTimer); countdownTimer=null;
         document.getElementById('countdownNum').textContent='';
-        // lowest slot among connected = host, host broadcasts start
-        const stillHere = Object.values(players).filter(p=>!p.disconnected);
+        const stillHere = getLobbyGroup(myMapId);
         const lowest = stillHere.reduce((a,b)=> a.slot<b.slot?a:b, stillHere[0]);
-        if(lowest.id===myId){
+        if(lowest && lowest.id===myId){
           const seed = Math.floor(Math.random()*999999)+1;
-          broadcast({t:'game_start', seed, elapsed:0});
+          broadcastToMap({t:'game_start', seed, elapsed:0, mapId:myMapId}, myMapId);
           mapSeed = seed; itemsRng = makeRng(seed);
-          startMatchLocal(0);
+          players[myId].inGameAlready=true;
+          loadMapFile(myMapId).then(()=>{ currentMap=availableMaps.find(m=>m.id===myMapId)||currentMap; startMatchLocal(0); });
         }
-      } else {
-        document.getElementById('countdownNum').textContent = countdownVal;
-      }
+      } else document.getElementById('countdownNum').textContent = countdownVal;
     },1000);
   } else if(!allReady && countdownTimer){
     clearInterval(countdownTimer); countdownTimer=null;
     document.getElementById('countdownNum').textContent='';
   }
 }
-
 function startMatchLocal(elapsedMs){
   matchState = 'playing';
+  if(players[myId]) players[myId].inGameAlready=true;
   matchStartTs = performance.now() - elapsedMs;
   document.getElementById('mainMenu').style.display='none';
   document.getElementById('hud').style.display='block';
   document.body.requestFullscreen?.().catch(()=>{});
 
-  const sp = spawnPoints[mySlot % spawnPoints.length] || {x:WORLD_W/2,y:WORLD_H/2};
+  const validSpawns = spawnPoints.filter(sp=>Math.hypot(sp.x-zoneCenter.x,sp.y-zoneCenter.y) <= zoneStartRadius && !pointInAnyCollision(sp.x,sp.y,'player'));
+  const spawnPool = validSpawns.length ? validSpawns : spawnPoints.filter(sp=>!pointInAnyCollision(sp.x,sp.y,'player'));
+  const sp = spawnPool[mySlot % Math.max(1,spawnPool.length)] || {x:WORLD_W/2,y:WORLD_H/2};
   local.x = sp.x; local.y = sp.y; local.hp = 100; local.alive = true;
-  local.ammo = local.maxAmmo; local.inventory = []; local.activeSlot = 0; local.hasBag=false; local.bagDroppedOnDeath=false; localTraps=[]; teleportBeacon=null; trapBlindUntil=0; trapLockUntil=0;
+  local.ammo = local.maxAmmo; local.inventory = []; local.activeSlot = 0; local.hasBag=false; local.bagDroppedOnDeath=false; localTraps=[]; groundBombs=[]; lasers=[]; teleportBeacon=null; trapBlindUntil=0; trapLockUntil=0;
   players[myId].x=local.x; players[myId].y=local.y; players[myId].hp=100; players[myId].alive=true;
   camera.x = local.x; camera.y = local.y;
   broadcast({
@@ -632,7 +818,14 @@ function startMatchLocal(elapsedMs){
   name:myName
 });
 
-  zoneCenter = {x:WORLD_W/2, y:WORLD_H/2};
+  const zp = Array.isArray(currentMap?.zonePoints) && currentMap.zonePoints.length ? currentMap.zonePoints[0] : null;
+  zoneCenter = zp ? {x:zp.x,y:zp.y} : (currentMap?.zoneCenter ? {...currentMap.zoneCenter} : {x:WORLD_W/2,y:WORLD_H/2});
+  // Başlangıç alanı haritanın tamamını kapsayacak kadar büyük başlar.
+  // Merkez haritanın ortasında değilse en uzak köşeye göre hesaplanır.
+  const zoneCorners = [
+    {x:0,y:0},{x:WORLD_W,y:0},{x:WORLD_W,y:WORLD_H},{x:0,y:WORLD_H}
+  ];
+  zoneStartRadius = Math.max(...zoneCorners.map(c=>Math.hypot(c.x-zoneCenter.x,c.y-zoneCenter.y))) * 1.02;
   spawnWorldItems();
   renderInventoryUI();
   spawnNotif('Oyun başladı — hayatta kal!');
@@ -675,7 +868,7 @@ function spawnWorldItems(){
 
   // Normal eşyaların HEPSİ haritada birden fazla kez çıkar.
   // Harita büyüdüğü için yoğunluğu korumak adına her türden 45 adet.
-  const commonTypes = ['energy','wall','medkit','apple','bomb','teleport','trap'];
+  const commonTypes = ['energy','wall','medkit','apple','bomb','teleport','trap','groundbomb'];
   for(const type of commonTypes){
     for(let i=0;i<45;i++){
       const p=pick(true);
@@ -683,19 +876,11 @@ function spawnWorldItems(){
     }
   }
 
-  // Çanta, Sihirli Küre ve Airstrike özel eşyalardır:
-  // her maçta TAM 1'er tane ve merkeze yakın bir konumda oluşurlar.
-  const specialTypes = ['bag','orb','airstrike'];
+  // Unique eşyaların HER BİRİNDEN yalnızca 1 tane çıkar.
+  // Bunlar merkeze zorlanmaz, diğer eşyalar gibi haritanın rastgele zeminlerine dağılır.
+  const specialTypes = ['bag','orb','airstrike','laser'];
   for(const type of specialTypes){
-    let p=null;
-    for(let tries=0;tries<120;tries++){
-      const gx=Math.floor(GRID_W/2 + (itemsRng()-0.5)*20);
-      const gy=Math.floor(GRID_H/2 + (itemsRng()-0.5)*20);
-      if(gx>0&&gy>0&&gx<GRID_W-1&&gy<GRID_H-1&&grid[gy*GRID_W+gx]===0){
-        p={x:gx*CELL+CELL/2,y:gy*CELL+CELL/2}; break;
-      }
-    }
-    if(!p) p=pick(false);
+    const p=pick(true);
     items.push({id:'it'+(nextIdCounter++), type, x:p.x, y:p.y});
   }
 }
@@ -703,37 +888,27 @@ function spawnWorldItems(){
 // ---------------------------------------------------------------------------
 // ZONE MATH (pure function of elapsed match time -> deterministic across peers)
 // ---------------------------------------------------------------------------
-function computeZone(elapsedSec, aliveCount){
-  // bonus from magic orb events: while within 8s window after use, extra x2 speed
-  let bonus = 0;
+function zoneEffectiveElapsed(realElapsed){
+  let eff=realElapsed;
   for(const ts of bonusShrinkEvents){
-    if(elapsedSec >= ts){
-      const dt = Math.min(elapsedSec-ts, 8);
-      bonus += dt*2;
-    }
+    if(typeof ts==='number') eff += Math.max(0,Math.min(10,realElapsed-ts))*4; // 5x total speed
   }
-  let effElapsed = elapsedSec + bonus;
-  if(aliveCount<=1) {
-    // freeze: use a cached frozen time
-    effElapsed = computeZone._frozenAt ?? effElapsed;
-    computeZone._frozenAt = effElapsed;
-  } else {
-    computeZone._frozenAt = undefined;
-  }
-  let t = 0, r0 = zoneStartRadius, r1 = zoneStartRadius, phaseDmg = 0;
+  return eff;
+}
+function computeZone(elapsedSec, aliveCount){
+  let effElapsed = zoneEffectiveElapsed(elapsedSec);
+  if(aliveCount<=1){ effElapsed=computeZone._frozenAt ?? effElapsed; computeZone._frozenAt=effElapsed; }
+  else computeZone._frozenAt=undefined;
+  let t=0, r1=zoneStartRadius, phaseDmg=1;
   for(let i=0;i<ZONE_PHASES.length;i++){
-    const ph = ZONE_PHASES[i];
-    const waitEnd = t+ph.wait, shrinkEnd = waitEnd+ph.dur;
-    const fromR = i===0? zoneStartRadius : zoneStartRadius*ZONE_PHASES[i-1].frac;
-    const toR = zoneStartRadius*ph.frac;
-    if(effElapsed < waitEnd){ r1 = fromR; phaseDmg = i+1; break; }
-    else if(effElapsed < shrinkEnd){
-      const f = (effElapsed-waitEnd)/ph.dur;
-      r1 = fromR + (toR-fromR)*f; phaseDmg = i+1; break;
-    } else { r1 = toR; phaseDmg = i+2; t = shrinkEnd; }
+    const ph=ZONE_PHASES[i], waitEnd=t+ph.wait, shrinkEnd=waitEnd+ph.dur;
+    const fromR=i===0?zoneStartRadius:zoneStartRadius*ZONE_PHASES[i-1].frac;
+    const toR=zoneStartRadius*ph.frac;
+    if(effElapsed<waitEnd){ r1=fromR; phaseDmg=i+1; break; }
+    if(effElapsed<shrinkEnd){ const f=(effElapsed-waitEnd)/ph.dur; r1=fromR+(toR-fromR)*f; phaseDmg=i+1; break; }
+    r1=toR; phaseDmg=i+2; t=shrinkEnd;
   }
-  const nextTargetFrac = ZONE_PHASES[Math.min(ZONE_PHASES.findIndex(p=>zoneStartRadius*p.frac===undefined)+0,ZONE_PHASES.length-1)];
-  return { radius: Math.max(r1,20), dmgPerSec: phaseDmg*2.6 };
+  return {radius:Math.max(r1,20), dmgPerSec:phaseDmg*2.6};
 }
 function zoneNextPhaseInfo(elapsedSec){
   let t=0;
@@ -757,17 +932,21 @@ function segIntersect(x1,y1,x2,y2,x3,y3,x4,y4){
   if(t>=0 && t<=1 && u>=0 && u<=1) return { x:x1+t*(x2-x1), y:y1+t*(y2-y1), t };
   return null;
 }
-function castRay(x0,y0,angle,maxDist){
+function castRay(x0,y0,angle,maxDist,blockKind='raycast'){
   const dx=Math.cos(angle), dy=Math.sin(angle);
-  const step = CELL*0.28;
-  let dist=0, hitDist=maxDist, hx=x0+dx*maxDist, hy=y0+dy*maxDist, wallId=null;
-  while(dist<maxDist){
-    const px=x0+dx*dist, py=y0+dy*dist;
-    const gx=Math.floor(px/CELL), gy=Math.floor(py/CELL);
-    if(isWallCell(gx,gy)){ hitDist=dist; hx=px; hy=py; wallId=null; break; }
-    dist+=step;
+  let hitDist=maxDist, hx=x0+dx*maxDist, hy=y0+dy*maxDist, wallId=null;
+  const ex=x0+dx*maxDist, ey=y0+dy*maxDist;
+  for(const w of collisionWalls){
+    if(w[blockKind]!==true) continue;
+    const c=rectCorners(w),segs=[[c[0],c[1]],[c[1],c[2]],[c[2],c[3]],[c[3],c[0]]];
+    for(const seg of segs){
+      const r=segIntersect(x0,y0,ex,ey,seg[0].x,seg[0].y,seg[1].x,seg[1].y);
+      if(r){
+        const d2=Math.hypot(r.x-x0,r.y-y0);
+        if(d2<hitDist){ hitDist=d2; hx=r.x; hy=r.y; wallId=null; }
+      }
+    }
   }
-  const ex=x0+dx*hitDist, ey=y0+dy*hitDist;
   for(const w of walls){
     for(const s of segsOfWall(w)){
       const r = segIntersect(x0,y0,ex,ey,s.x1,s.y1,s.x2,s.y2);
@@ -778,28 +957,39 @@ function castRay(x0,y0,angle,maxDist){
 }
 function hasLOS(x1,y1,x2,y2){
   const dist = Math.hypot(x2-x1,y2-y1);
-  const r = castRay(x1,y1,Math.atan2(y2-y1,x2-x1), dist);
+  const r = castRay(x1,y1,Math.atan2(y2-y1,x2-x1), dist, 'raycast');
   return r.dist >= dist-6;
 }
 
 // ---------------------------------------------------------------------------
 // COLLISION
 // ---------------------------------------------------------------------------
-function collideGrid(x,y,radius){
-  const cells = [[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]];
+function collideGrid(x,y,radius){ return {x,y}; }
+function collideMapWalls(x,y,radius){
   let nx=x, ny=y;
-  const gx0=Math.floor(x/CELL), gy0=Math.floor(y/CELL);
-  for(const [ox,oy] of [[0,0],...cells]){
-    const gx=gx0+ox, gy=gy0+oy;
-    if(!isWallCell(gx,gy)) continue;
-    const wx0=gx*CELL, wy0=gy*CELL, wx1=wx0+CELL, wy1=wy0+CELL;
-    const cx = Math.max(wx0,Math.min(nx,wx1)), cy = Math.max(wy0,Math.min(ny,wy1));
-    const dx=nx-cx, dy=ny-cy, d=Math.hypot(dx,dy);
-    if(d<radius && d>0.0001){ const push=(radius-d); nx += dx/d*push; ny += dy/d*push; }
-    else if(d<=0.0001){ nx += (Math.random()-0.5); ny -= radius; }
+  for(const w of collisionWalls){
+    if(w.player===false) continue;
+    let q=rectToLocal(w,nx,ny);
+    const hx=Math.max(-w.w/2,Math.min(q.x,w.w/2));
+    const hy=Math.max(-w.h/2,Math.min(q.y,w.h/2));
+    let dx=q.x-hx,dy=q.y-hy,d=Math.hypot(dx,dy);
+    if(d<radius){
+      if(d>0.0001){
+        const push=radius-d;q.x+=dx/d*push;q.y+=dy/d*push;
+      }else{
+        const left=Math.abs(q.x+w.w/2),right=Math.abs(w.w/2-q.x),top=Math.abs(q.y+w.h/2),bottom=Math.abs(w.h/2-q.y);
+        const m=Math.min(left,right,top,bottom);
+        if(m===left) q.x=-w.w/2-radius;
+        else if(m===right) q.x=w.w/2+radius;
+        else if(m===top) q.y=-w.h/2-radius;
+        else q.y=w.h/2+radius;
+      }
+      const out=rectToWorld(w,q.x,q.y);nx=out.x;ny=out.y;
+    }
   }
   return {x:nx,y:ny};
 }
+
 function collideWalls(x,y,radius){
   let nx=x, ny=y;
   for(const w of walls){
@@ -889,7 +1079,8 @@ function tryReload(){
 }
 function checkHitFromMe(x,y,angle,range,dmg){
   // hitscan: also damage walls slightly on hit? no - bullets only hurt players, blocked by walls
-  const end = castRay(x,y,angle,range);
+  const end = castRay(x,y,angle,range,'bullet');
+  segmentHitsGroundBomb(x,y,end.x,end.y);
   // find nearest player intersecting segment within small radius
   let best=null, bestD=Infinity;
   for(const id in players){
@@ -914,7 +1105,7 @@ function checkHitFromMe(x,y,angle,range,dmg){
 }
 function checkSelfHitByRay(x,y,angle,range,dmg,fromId){
   if(!local.alive || matchState!=='playing') return;
-  const end = castRay(x,y,angle,range);
+  const end = castRay(x,y,angle,range,'bullet');
   const d = pointSegDist(local.x,local.y,x,y,end.x,end.y);
   const dist = Math.hypot(local.x-x,local.y-y);
   if(d<PLAYER_RADIUS+4 && dist<=end.dist+14){
@@ -945,7 +1136,7 @@ function applyDamageToSelf(dmg, fromId){
 // ---------------------------------------------------------------------------
 let tracers = [];
 function addTracerFX(x,y,angle,range){
-  const end = castRay(x,y,angle,range);
+  const end = castRay(x,y,angle,range,'bullet');
   tracers.push({x1:x,y1:y,x2:end.x,y2:end.y,t0:performance.now()});
 }
 function spawnExplosionFX(x,y,radius){
@@ -963,7 +1154,8 @@ function spawnExplosionFX(x,y,radius){
 function renderInventoryUI(){
   const inv = document.getElementById('inventory');
   inv.innerHTML = '';
-  for(let i=0;i<3;i++){
+  const slotCount = local.hasBag ? 5 : 3;
+  for(let i=0;i<slotCount;i++){
     const slotDiv = document.createElement('div');
     slotDiv.className = 'slot'+(i===local.activeSlot?' active':'');
     const item = local.inventory[i];
@@ -1005,7 +1197,18 @@ function tryPickupNearby(){
 function dropActiveItem(){
   const item = local.inventory[local.activeSlot];
   if(!item) return;
-  local.inventory.splice(local.activeSlot,1);
+  const removed = local.inventory.splice(local.activeSlot,1)[0];
+  if(removed?.type==='bag'){
+    local.hasBag=false;
+    if(local.inventory.length>3){
+      const extras=local.inventory.splice(3);
+      for(const ex of extras){
+        const exId='it'+(nextIdCounter++), exx=local.x+Math.cos(local.angle)*30, exy=local.y+Math.sin(local.angle)*30;
+        items.push({id:exId,type:ex.type,x:exx,y:exy,dropTs:performance.now()});
+        broadcast({t:'item_drop',newId:exId,type:ex.type,x:exx,y:exy});
+      }
+    }
+  }
   const newId = 'it'+(nextIdCounter++);
   items.push({id:newId, type:item.type, x:local.x+Math.cos(local.angle)*30, y:local.y+Math.sin(local.angle)*30, dropTs:performance.now()});
   local.dropCooldowns[newId] = performance.now()+1000;
@@ -1023,6 +1226,8 @@ function useActiveItem(){
     case 'teleport': useTeleporter(item); break;
     case 'airstrike': openAirstrikeTargeting(); break;
     case 'orb': useMagicOrb(); consumeActive(); break;
+    case 'laser': openLaserTargeting(); break;
+    case 'groundbomb': placeGroundBomb(); consumeActive(); break;
     case 'trap': placeTrap(); consumeActive(); break;
     case 'bag': activateBag(); break;
     case 'bomb': /* bomb handled via right-click charge, not E */ break;
@@ -1101,7 +1306,8 @@ function checkLocalTrapTriggers(now){
     }
     if(victim){
       localTraps.splice(i,1);
-      broadcast({t:'trap_triggered', victimId:victim, dmg:35});
+      broadcast({t:'trap_triggered', victimId:victim, dmg:35, x:tr.x, y:tr.y});
+      triggerNearbyGroundBombs(tr.x,tr.y,90);
       if(players[victim]) players[victim].alive=players[victim].alive;
       spawnNotif(`🪤 Tuzak tetiklendi: ${players[victim]?.name||'oyuncu'}`);
     }
@@ -1109,6 +1315,31 @@ function checkLocalTrapTriggers(now){
 }
 function drawTrapEffect(now){
   if(now>=trapBlindUntil){ trapZoom=1; return; }
+}
+
+function placeGroundBomb(){
+  const x=local.x+Math.cos(local.angle)*38, y=local.y+Math.sin(local.angle)*38;
+  const id='gb_'+myId+'_'+Date.now()+'_'+Math.random().toString(36).slice(2);
+  const gb={id,x,y,ownerId:myId,armed:true}; groundBombs.push(gb);
+  broadcast({t:'groundbomb_place',...gb});
+  spawnNotif('💥 Yer bombası kuruldu');
+}
+function triggerGroundBomb(gb, reason=''){
+  if(!gb || !groundBombs.find(x=>x.id===gb.id)) return;
+  groundBombs=groundBombs.filter(x=>x.id!==gb.id);
+  broadcast({t:'groundbomb_trigger',id:gb.id,x:gb.x,y:gb.y,reason});
+  doExplosion(gb.x,gb.y,115,55,70,myId);
+}
+function segmentHitsGroundBomb(x1,y1,x2,y2){
+  for(const gb of groundBombs){
+    if(pointSegDist(gb.x,gb.y,x1,y1,x2,y2)<24){ triggerGroundBomb(gb,'bullet'); return true; }
+  }
+  return false;
+}
+function triggerNearbyGroundBombs(x,y,radius){
+  for(const gb of [...groundBombs]){
+    if(Math.hypot(gb.x-x,gb.y-y)<radius+80) triggerGroundBomb(gb,'trap');
+  }
 }
 function useMagicOrb(){
   orbUsedCount++;
@@ -1130,10 +1361,12 @@ function throwBomb(){
   const travelMs = (dist/720)*1000;
   projectiles.push({x:local.x,y:local.y,tx,ty,t0:performance.now(),t1:performance.now()+travelMs, ownerId:myId});
   broadcast({t:'bomb_throw', x:local.x, y:local.y, tx, ty, travelMs});
+  segmentHitsGroundBomb(local.x,local.y,tx,ty);
   consumeActive();
   setTimeout(()=> doExplosion(tx,ty,140,60,80,myId), travelMs);
 }
 function doExplosion(x,y,radius,dmg,wallDmg,ownerId){
+  triggerNearbyGroundBombs(x,y,radius+35);
   spawnExplosionFX(x,y,radius);
   broadcast({t:'explosion', x, y, radius, dmg, wallDmg, ownerId});
   checkSelfExplosionDamage(x,y,radius,dmg,ownerId);
@@ -1166,42 +1399,129 @@ function checkSelfExplosionDamage(x,y,radius,dmg,ownerId){
 // AIRSTRIKE TARGETING UI
 // ---------------------------------------------------------------------------
 let airstrikeTargeting = false;
+
+const laserCanvas=document.getElementById('laserCanvas'), lctx=laserCanvas.getContext('2d');
+function targetMapReset(canvas){
+  const sx=canvas.width/WORLD_W, sy=canvas.height/WORLD_H;
+  targetView.zoom=Math.max(.08,Math.min(2.5,Math.min(sx,sy)*.92));
+  targetView.x=WORLD_W/2; targetView.y=WORLD_H/2;
+}
+const targetView={x:WORLD_W/2,y:WORLD_H/2,zoom:1,dragging:false,lastX:0,lastY:0, moved:false};
+function targetWorldPoint(e,canvas){
+  const r=canvas.getBoundingClientRect();
+  const sx=(e.clientX-r.left)*(canvas.width/r.width), sy=(e.clientY-r.top)*(canvas.height/r.height);
+  return {x:(sx-canvas.width/2)/targetView.zoom+targetView.x, y:(sy-canvas.height/2)/targetView.zoom+targetView.y};
+}
+function drawTargetBase(canvas,c){
+  c.clearRect(0,0,canvas.width,canvas.height);
+  c.fillStyle=mapBackgroundColor||'#15171c'; c.fillRect(0,0,canvas.width,canvas.height);
+  c.save();
+  c.translate(canvas.width/2,canvas.height/2); c.scale(targetView.zoom,targetView.zoom); c.translate(-targetView.x,-targetView.y);
+  if(mapImage && mapImage.complete && mapImage.naturalWidth) c.drawImage(mapImage,0,0,WORLD_W,WORLD_H);
+  for(const w of collisionWalls){
+    c.fillStyle='#555b68'; c.fillRect(w.x,w.y,w.w,w.h);
+    c.strokeStyle='rgba(190,196,210,.75)'; c.lineWidth=2/targetView.zoom; c.strokeRect(w.x+.5,w.y+.5,w.w-1,w.h-1);
+  }
+  c.restore();
+}
+function drawLaserMap(){
+  drawTargetBase(laserCanvas,lctx);
+  lctx.save();
+  lctx.translate(laserCanvas.width/2,laserCanvas.height/2); lctx.scale(targetView.zoom,targetView.zoom); lctx.translate(-targetView.x,-targetView.y);
+  const me=getViewOrigin();
+  lctx.fillStyle='#42a5f5'; lctx.strokeStyle='#fff'; lctx.lineWidth=5/targetView.zoom;
+  lctx.beginPath(); lctx.arc(me.x,me.y,24/targetView.zoom,0,Math.PI*2); lctx.fill(); lctx.stroke();
+  lctx.fillStyle='#fff'; lctx.font=`${18/targetView.zoom}px sans-serif`; lctx.textAlign='center'; lctx.fillText('SEN',me.x,me.y-32/targetView.zoom);
+  if(laserPoints.length===2){
+    const a=laserPoints[0],b=laserPoints[1],dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy)||1,ux=dx/len,uy=dy/len,e=10000;
+    lctx.strokeStyle='#ff5252'; lctx.lineWidth=4/targetView.zoom;
+    lctx.beginPath(); lctx.moveTo(a.x-ux*e,a.y-uy*e); lctx.lineTo(b.x+ux*e,b.y+uy*e); lctx.stroke();
+  }
+  laserPoints.forEach((p,i)=>{lctx.fillStyle='#fff';lctx.beginPath();lctx.arc(p.x,p.y,18/targetView.zoom,0,7);lctx.fill();lctx.fillStyle='#ff5252';lctx.font=`${18/targetView.zoom}px sans-serif`;lctx.textAlign='center';lctx.fillText(String(i+1),p.x,p.y+6/targetView.zoom);});
+  lctx.restore();
+}
+function bindTargetMapControls(canvas, redraw){
+  canvas.addEventListener('contextmenu',e=>e.preventDefault());
+  canvas.addEventListener('mousedown',e=>{
+    if(e.button!==2) return;
+    targetView.dragging=true; targetView.moved=false; targetView.lastX=e.clientX; targetView.lastY=e.clientY;
+  });
+  window.addEventListener('mouseup',e=>{ if(e.button===2) targetView.dragging=false; });
+  window.addEventListener('mousemove',e=>{
+    if(!targetView.dragging) return;
+    const dx=e.clientX-targetView.lastX, dy=e.clientY-targetView.lastY;
+    if(Math.abs(dx)+Math.abs(dy)>2) targetView.moved=true;
+    targetView.lastX=e.clientX; targetView.lastY=e.clientY;
+    targetView.x-=dx/targetView.zoom; targetView.y-=dy/targetView.zoom;
+    targetView.x=Math.max(0,Math.min(WORLD_W,targetView.x)); targetView.y=Math.max(0,Math.min(WORLD_H,targetView.y));
+    redraw();
+  });
+  canvas.addEventListener('wheel',e=>{
+    e.preventDefault();
+    const before=targetWorldPoint(e,canvas);
+    const factor=e.deltaY<0?1.12:0.89;
+    targetView.zoom=Math.max(.08,Math.min(4,targetView.zoom*factor));
+    const after=targetWorldPoint(e,canvas);
+    targetView.x += before.x-after.x; targetView.y += before.y-after.y;
+    targetView.x=Math.max(0,Math.min(WORLD_W,targetView.x)); targetView.y=Math.max(0,Math.min(WORLD_H,targetView.y));
+    redraw();
+  },{passive:false});
+}
+bindTargetMapControls(laserCanvas,drawLaserMap);
+laserCanvas.addEventListener('click',e=>{
+  e.preventDefault();
+  if(!laserTargeting || targetView.moved) { targetView.moved=false; return; }
+  const p=targetWorldPoint(e,laserCanvas);
+  if(p.x<0||p.y<0||p.x>WORLD_W||p.y>WORLD_H) return;
+  laserPoints.push(p); drawLaserMap();
+  if(laserPoints.length===2){
+    const [a,b]=laserPoints, id='laser_'+myId+'_'+Date.now();
+    lasers.push({id,x1:a.x,y1:a.y,x2:b.x,y2:b.y,t0:performance.now(),t1:performance.now()+10000,ownerId:myId});
+    broadcast({t:'laser_start',id,x1:a.x,y1:a.y,x2:b.x,y2:b.y});
+    laserTargeting=false; laserPoints=[]; document.getElementById('laserOverlay').style.display='none'; consumeActive();
+    spawnNotif('🔴 Lazer 10 saniye açık');
+  }
+});
+function openLaserTargeting(){
+  laserTargeting=true; laserPoints=[]; targetMapReset(laserCanvas);
+  document.getElementById('laserOverlay').style.display='flex'; drawLaserMap();
+}
 function openAirstrikeTargeting(){
-  airstrikeTargeting = true;
+  airstrikeTargeting = true; targetMapReset(airstrikeCanvas);
   document.getElementById('airstrikeOverlay').style.display='flex';
   drawAirstrikeMap();
 }
-airstrikeCanvas.addEventListener('mousemove', e=>{ if(airstrikeTargeting) drawAirstrikeMap(e); });
-airstrikeCanvas.addEventListener('click', e=>{
-  if(!airstrikeTargeting) return;
-  const rect = airstrikeCanvas.getBoundingClientRect();
-  const mx = e.clientX-rect.left, my = e.clientY-rect.top;
-  const wx = (mx/airstrikeCanvas.width)*WORLD_W, wy=(my/airstrikeCanvas.height)*WORLD_H;
-  airstrikeTargeting = false;
+bindTargetMapControls(airstrikeCanvas,()=>drawAirstrikeMap());
+airstrikeCanvas.addEventListener('click',e=>{
+  if(!airstrikeTargeting || targetView.moved){ targetView.moved=false; return; }
+  const p=targetWorldPoint(e,airstrikeCanvas);
+  if(p.x<0||p.y<0||p.x>WORLD_W||p.y>WORLD_H) return;
+  airstrikeTargeting=false;
   document.getElementById('airstrikeOverlay').style.display='none';
   consumeActive();
-  callAirstrike(wx,wy);
+  callAirstrike(p.x,p.y);
 });
 function drawAirstrikeMap(e){
-  actx.clearRect(0,0,560,560);
-  actx.fillStyle = '#0d0f14'; actx.fillRect(0,0,560,560);
+  drawTargetBase(airstrikeCanvas,actx);
   actx.save();
-  const scale = 560/WORLD_W;
-  actx.scale(scale,scale);
-  actx.fillStyle = '#23262f';
-  for(let y=0;y<GRID_H;y++) for(let x=0;x<GRID_W;x++) if(grid[y*GRID_W+x]===1) actx.fillRect(x*CELL,y*CELL,CELL,CELL);
-  actx.fillStyle = '#ff5252';
-  actx.beginPath(); actx.arc(local.x,local.y,26,0,7); actx.fill();
+  actx.translate(airstrikeCanvas.width/2,airstrikeCanvas.height/2); actx.scale(targetView.zoom,targetView.zoom); actx.translate(-targetView.x,-targetView.y);
+  actx.fillStyle='#ff5252';
+  actx.beginPath(); actx.arc(local.x,local.y,26/targetView.zoom,0,7); actx.fill();
   actx.restore();
   if(e){
-    const rect = airstrikeCanvas.getBoundingClientRect();
-    const mx = e.clientX-rect.left, my = e.clientY-rect.top;
-    actx.strokeStyle='#ff5252'; actx.lineWidth=2;
-    actx.beginPath(); actx.arc(mx,my,90*scale,0,7); actx.stroke();
-    actx.beginPath(); actx.moveTo(mx-14,my); actx.lineTo(mx+14,my); actx.moveTo(mx,my-14); actx.lineTo(mx,my+14);
-    actx.strokeStyle='#fff'; actx.stroke();
+    const p=targetWorldPoint(e,airstrikeCanvas);
+    if(p.x>=0&&p.y>=0&&p.x<=WORLD_W&&p.y<=WORLD_H){
+      actx.save();
+      actx.translate(airstrikeCanvas.width/2,airstrikeCanvas.height/2); actx.scale(targetView.zoom,targetView.zoom); actx.translate(-targetView.x,-targetView.y);
+      actx.strokeStyle='#ff5252'; actx.lineWidth=2/targetView.zoom;
+      actx.beginPath(); actx.arc(p.x,p.y,90/targetView.zoom,0,7); actx.stroke();
+      actx.beginPath(); actx.moveTo(p.x-14/targetView.zoom,p.y); actx.lineTo(p.x+14/targetView.zoom,p.y); actx.moveTo(p.x,p.y-14/targetView.zoom); actx.lineTo(p.x,p.y+14/targetView.zoom); actx.strokeStyle='#fff'; actx.stroke();
+      actx.restore();
+    }
   }
 }
+airstrikeCanvas.addEventListener('mousemove', e=>{ if(airstrikeTargeting) drawAirstrikeMap(e); });
+
 function callAirstrike(x,y){
   broadcast({t:'airstrike_target', x, y});
   spawnNotif('🚀 Hava saldırısı çağrıldı!');
@@ -1373,6 +1693,8 @@ function update(dt, now){
     let nx = local.x+dx*speed*dt, ny = local.y+dy*speed*dt;
     const gcol = collideGrid(nx,ny,PLAYER_RADIUS);
     nx=gcol.x; ny=gcol.y;
+    const mcol = collideMapWalls(nx,ny,PLAYER_RADIUS);
+    nx=mcol.x; ny=mcol.y;
     const wcol = collideWalls(nx,ny,PLAYER_RADIUS);
     nx=wcol.x; ny=wcol.y;
     nx = Math.max(PLAYER_RADIUS, Math.min(WORLD_W-PLAYER_RADIUS, nx));
@@ -1385,6 +1707,10 @@ function update(dt, now){
     const elapsed = (now-matchStartTs)/1000;
     const aliveCount = Object.values(players).filter(p=>p.alive).length;
     const zone = computeZone(elapsed, aliveCount);
+    // Alanın dışına çıkan/alanın dışında kalan yer bombaları tetiklenir.
+    for(const gb of [...groundBombs]){
+      if(Math.hypot(gb.x-zoneCenter.x,gb.y-zoneCenter.y)>zone.radius) triggerGroundBomb(gb,'zone');
+    }
     const d = Math.hypot(local.x-zoneCenter.x, local.y-zoneCenter.y);
     if(d>zone.radius){ local.hp -= zone.dmgPerSec*dt; players[myId].hp=local.hp; updateHealthUI();
       if(local.hp<=0 && local.alive){ local.alive=false; players[myId].alive=false;
@@ -1395,6 +1721,16 @@ function update(dt, now){
     }
     tryPickupNearby();
     checkLocalTrapTriggers(now);
+  }
+
+  // Yer bombası, oyuncunun hayatta olup olmamasından bağımsız olarak alan dışına çıkınca patlar.
+  const globalElapsed=(now-matchStartTs)/1000;
+  const globalAliveCount=Object.values(players).filter(p=>p.alive).length;
+  const globalZone=computeZone(globalElapsed,globalAliveCount);
+  for(const gb of [...groundBombs]){
+    if(Math.hypot(gb.x-zoneCenter.x,gb.y-zoneCenter.y)>globalZone.radius){
+      triggerGroundBomb(gb,'zone');
+    }
   }
 
   // broadcast state ~12/sec
@@ -1423,6 +1759,7 @@ function update(dt, now){
   tracers = tracers.filter(t=> now-t.t0 < 90);
   explosionsFX = explosionsFX.filter(e=> now-e.t0 < 500);
   projectiles = projectiles.filter(p=> now < p.t1+50);
+  updateLaserHazards(now);
 
   updateHUDTimers(now);
 }
@@ -1464,39 +1801,42 @@ function render(now){
   drawItems(now);
   drawProjectiles(now);
   drawPlayers();
+  drawLasers(now);
+  drawTrapWarnings(now);
   drawParticlesAndFX(now);
-
   ctx.restore();
 
-  // Karanlık, oyuncular ve eşyaların üstüne uygulanır.
-  // Ardından özel duvarlar karanlığın ÜSTÜNE çizilir.
+  // Görüş karanlığı artık HARİTANIN ve duvarların üstüne çiziliyor.
+  // Böylece görünmeyen gri duvarlar siyahın altında kalıyor.
   drawFogOfWar(now);
-  drawWallsTop();
+  // Collisionlar oyun sırasında görünmezdir; yalnızca fizik/raycast için kullanılır.
   drawMinimap(now);
   if(mapOpen) drawBigMap();
 }
 
 function visibleRange(){
-  const x0 = Math.max(0, Math.floor((camera.x-canvas.width/2)/CELL)-1);
-  const y0 = Math.max(0, Math.floor((camera.y-canvas.height/2)/CELL)-1);
-  const x1 = Math.min(GRID_W, Math.ceil((camera.x+canvas.width/2)/CELL)+1);
-  const y1 = Math.min(GRID_H, Math.ceil((camera.y+canvas.height/2)/CELL)+1);
-  return {x0,y0,x1,y1};
+  return {x0:0,y0:0,x1:GRID_W,y1:GRID_H};
+}
+function drawRotatedMapObject(c,o,stroke=false){
+  const cx=o.x+o.w/2,cy=o.y+o.h/2,a=degToRad(o.rotation||0);
+  c.save();c.translate(cx,cy);c.rotate(a);
+  if(o.type==='rect'){c.fillStyle=o.color||mapBackgroundColor;c.fillRect(-o.w/2,-o.h/2,o.w,o.h);}
+  else if(o._img&&o._img.complete&&o._img.naturalWidth){c.drawImage(o._img,-o.w/2,-o.h/2,o.w,o.h);}
+  else {c.fillStyle='#555';c.fillRect(-o.w/2,-o.h/2,o.w,o.h);}
+  if(stroke){c.strokeStyle='rgba(190,196,210,.75)';c.lineWidth=2;c.strokeRect(-o.w/2+.5,-o.h/2+.5,Math.max(0,o.w-1),Math.max(0,o.h-1));}
+  c.restore();
 }
 function drawFloorAndWalls(){
-  const {x0,y0,x1,y1} = visibleRange();
-  for(let y=y0;y<y1;y++){
-    for(let x=x0;x<x1;x++){
-      const w = grid[y*GRID_W+x]===1;
-      ctx.fillStyle = w ? '#20232c' : ((x+y)%2===0 ? '#17191f' : '#15171c');
-      ctx.fillRect(x*CELL,y*CELL,CELL,CELL);
-      if(w){
-        ctx.fillStyle = 'rgba(0,0,0,.35)';
-        ctx.fillRect(x*CELL,y*CELL+CELL-6,CELL,6);
-      }
-    }
+  ctx.fillStyle = mapBackgroundColor || '#15171c';
+  ctx.fillRect(0,0,WORLD_W,WORLD_H);
+  for(const o of mapImages)drawRotatedMapObject(ctx,o,false);
+}
+function drawMapCollisionWalls(){
+  for(const w of collisionWalls){
+    drawRotatedMapObject(ctx,{...w,type:'rect',color:'#555b68'},true);
   }
 }
+function drawMapWallsTop(){ drawMapCollisionWalls(); }
 function drawWallsTop(){
   for(const w of walls){
     const c = wallCorners(w);
@@ -1509,13 +1849,13 @@ function drawWallsTop(){
     ctx.fill();
     ctx.strokeStyle = '#5d4037'; ctx.lineWidth=2; ctx.stroke();
     ctx.restore();
-    // hp bar
     const pct = w.hp/w.maxHp;
     ctx.fillStyle='#000a'; ctx.fillRect(w.x-24,w.y-26,48,5);
     ctx.fillStyle= pct>0.5?'#66bb6a':pct>0.25?'#ffca28':'#ff5252';
     ctx.fillRect(w.x-24,w.y-26,48*pct,5);
   }
 }
+
 function drawZone(now){
   const elapsed = (now-matchStartTs)/1000;
   const aliveCount = Object.values(players).filter(p=>p.alive).length;
@@ -1545,13 +1885,27 @@ function drawZone(now){
     ctx.setLineDash([]);
   }
 }
+function getViewOrigin(){
+  if(local.alive) return {x:local.x,y:local.y};
+  const sp=players[local.spectateTarget];
+  return sp ? {x:sp.x,y:sp.y} : {x:local.x,y:local.y};
+}
+function canSeeWorldPoint(x,y,range=VIEW_DIST){
+  const o=getViewOrigin();
+  const d=Math.hypot(x-o.x,y-o.y);
+  if(d>range) return false;
+  return hasLOS(o.x,o.y,x,y);
+}
 function drawItems(now){
   for(const it of items){
+    // Fog'a güvenmek yerine eşyayı ayrıca raycast ile gizliyoruz. Böylece duvarın
+    // arkasındaki eşya, fog polygonunun olası piksel kaçaklarından da görünmez.
+    if((matchState==='playing'||matchState==='spectating') && !canSeeWorldPoint(it.x,it.y)) continue;
     const bob = Math.sin(now/300 + it.x)*3;
     ctx.beginPath(); ctx.arc(it.x, it.y+10, 12, 0, Math.PI*2);
     ctx.fillStyle = 'rgba(255,255,255,.06)'; ctx.fill();
-    const rare = it.type==='airstrike'||it.type==='orb';
-    if(rare){ ctx.beginPath(); ctx.arc(it.x,it.y+bob,20,0,Math.PI*2); ctx.strokeStyle='#ffd54f'; ctx.lineWidth=2; ctx.stroke(); }
+    const rare = ['bag','orb','airstrike','laser'].includes(it.type);
+    if(rare){ ctx.beginPath(); ctx.arc(it.x,it.y+bob,24,0,Math.PI*2); ctx.strokeStyle='#ffd54f'; ctx.lineWidth=3; ctx.shadowColor='#ffd54f'; ctx.shadowBlur=10; ctx.stroke(); ctx.shadowBlur=0; }
     if(ITEM_IMAGES[it.type]){
       ctx.drawImage(ITEM_IMAGES[it.type], it.x-16, it.y-16+bob, 32,32);
     } else {
@@ -1559,6 +1913,14 @@ function drawItems(now){
       ctx.fillStyle = '#fff';
       ctx.fillText(ITEM_ICONS[it.type], it.x, it.y+bob);
     }
+  }
+  for(const gb of groundBombs){
+    // Yer bombası yalnızca yakındayken ve görüş hattı açıksa görünür.
+    if(!canSeeWorldPoint(gb.x,gb.y,260)) continue;
+    ctx.save(); ctx.translate(gb.x,gb.y); ctx.globalAlpha=.9;
+    if(ITEM_IMAGES.groundbomb) ctx.drawImage(ITEM_IMAGES.groundbomb,-14,-14,28,28);
+    else { ctx.font='18px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('💥',0,0); }
+    ctx.restore();
   }
   if(teleportBeacon){
     ctx.beginPath(); ctx.arc(teleportBeacon.x, teleportBeacon.y, 20+Math.sin(now/200)*4, 0, Math.PI*2);
@@ -1619,6 +1981,49 @@ function drawPlayers(){
   for(const t of tracers){
     ctx.beginPath(); ctx.moveTo(t.x1,t.y1); ctx.lineTo(t.x2,t.y2);
     ctx.strokeStyle='rgba(255,235,59,.85)'; ctx.lineWidth=2; ctx.stroke();
+  }
+}
+function drawTrapWarnings(now){
+  trapWarnings=trapWarnings.filter(w=>now-w.t0<1800);
+  for(const w of trapWarnings){
+    const f=(now-w.t0)/1800, y=w.y-34-Math.sin(now/100)*5;
+    ctx.save(); ctx.globalAlpha=1-f; ctx.font='28px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('⚠️',w.x,y); ctx.restore();
+  }
+}
+const laserDamageCooldown = new Map();
+function pointLineDistance(px,py,x1,y1,x2,y2){
+  const dx=x2-x1,dy=y2-y1,len2=dx*dx+dy*dy||1;
+  let t=((px-x1)*dx+(py-y1)*dy)/len2; t=Math.max(0,Math.min(1,t));
+  const cx=x1+dx*t,cy=y1+dy*t; return Math.hypot(px-cx,py-cy);
+}
+function laserSegment(l){
+  const dx=l.x2-l.x1,dy=l.y2-l.y1,len=Math.hypot(dx,dy)||1,ux=dx/len,uy=dy/len,e=3000;
+  return {x1:l.x1-ux*e,y1:l.y1-uy*e,x2:l.x2+ux*e,y2:l.y2+uy*e};
+}
+function updateLaserHazards(now){
+  for(const l of lasers){
+    const s=laserSegment(l);
+    for(const gb of [...groundBombs]){
+      if(pointLineDistance(gb.x,gb.y,s.x1,s.y1,s.x2,s.y2)<28) triggerGroundBomb(gb,'laser');
+    }
+    if(local.alive && pointLineDistance(local.x,local.y,s.x1,s.y1,s.x2,s.y2)<24){
+      const key=l.id+':'+myId, last=laserDamageCooldown.get(key)||0;
+      if(now-last>=250){ laserDamageCooldown.set(key,now); applyDamageToSelf(12,l.ownerId); }
+    }
+  }
+}
+function drawLasers(now){
+  lasers=lasers.filter(l=>now<l.t1);
+  for(const l of lasers){
+    const dx=l.x2-l.x1, dy=l.y2-l.y1, len=Math.hypot(dx,dy)||1;
+    const ux=dx/len, uy=dy/len;
+    const ext=3000;
+    ctx.save();
+    ctx.strokeStyle='rgba(255,40,40,.25)'; ctx.lineWidth=18; ctx.beginPath();
+    ctx.moveTo(l.x1-ux*ext,l.y1-uy*ext); ctx.lineTo(l.x2+ux*ext,l.y2+uy*ext); ctx.stroke();
+    ctx.strokeStyle='#ff3030'; ctx.lineWidth=4; ctx.shadowColor='#ff0000'; ctx.shadowBlur=18; ctx.beginPath();
+    ctx.moveTo(l.x1-ux*ext,l.y1-uy*ext); ctx.lineTo(l.x2+ux*ext,l.y2+uy*ext); ctx.stroke(); ctx.restore();
   }
 }
 function drawParticlesAndFX(now){
@@ -1717,6 +2122,9 @@ function drawFogOfWar(now){
   fogCtx.fill();
 
   fogCtx.globalCompositeOperation = 'source-over';
+  // Fog ayrı bir DOM katmanı olarak değil, doğrudan oyun canvasına çizilir.
+  // Böylece hemen ardından çizilen duvarlar gerçekten karanlığın üstünde kalır.
+  ctx.drawImage(fogCanvas,0,0,canvas.width,canvas.height);
 }
 function toggleBigMap(){
   mapOpen=!mapOpen;
@@ -1729,14 +2137,20 @@ function drawBigMap(){
   const scale=Math.min(bigMapCanvas.width/WORLD_W,bigMapCanvas.height/WORLD_H);
   const ox=(bigMapCanvas.width-WORLD_W*scale)/2, oy=(bigMapCanvas.height-WORLD_H*scale)/2;
   bmctx.save(); bmctx.translate(ox,oy); bmctx.scale(scale,scale);
-  for(let y=0;y<GRID_H;y++) for(let x=0;x<GRID_W;x++){
-    bmctx.fillStyle=grid[y*GRID_W+x] ? '#262a33' : '#15171c';
-    bmctx.fillRect(x*CELL,y*CELL,CELL,CELL);
-  }
+  bmctx.fillStyle=mapBackgroundColor||'#15171c'; bmctx.fillRect(0,0,WORLD_W,WORLD_H);
+  for(const o of mapImages)drawRotatedMapObject(bmctx,o,false);
   for(const w of walls){
     const c=wallCorners(w); bmctx.beginPath(); bmctx.moveTo(c[0].x,c[0].y);
     for(let i=1;i<4;i++) bmctx.lineTo(c[i].x,c[i].y); bmctx.closePath();
     bmctx.fillStyle='#8d6e63'; bmctx.fill();
+  }
+  // Özel eşyaların yerinde büyük daireler
+  for(const it of items.filter(i=>['bag','orb','airstrike','laser'].includes(i.type))){
+    bmctx.beginPath(); bmctx.arc(it.x,it.y,380,0,Math.PI*2);
+    bmctx.strokeStyle='rgba(255,213,79,.85)'; bmctx.lineWidth=7/scale; bmctx.shadowColor='#ffd54f'; bmctx.shadowBlur=18/scale; bmctx.stroke(); bmctx.shadowBlur=0;
+  }
+  for(const gb of groundBombs){
+    bmctx.beginPath(); bmctx.arc(gb.x,gb.y,18/scale,0,Math.PI*2); bmctx.fillStyle='#ff5252'; bmctx.fill();
   }
   const elapsed=(performance.now()-matchStartTs)/1000;
   const aliveCount=Object.values(players).filter(p=>p.alive).length;
@@ -1746,22 +2160,22 @@ function drawBigMap(){
 
   if(teleportBeacon){
     bmctx.font=`${42/scale}px sans-serif`; bmctx.textAlign='center'; bmctx.textBaseline='middle';
-    if(ITEM_IMAGES.teleport) bmctx.drawImage(ITEM_IMAGES.teleport,teleportBeacon.x-18/scale,teleportBeacon.y-18/scale,36/scale,36/scale);
+    if(ITEM_IMAGES.teleport) bmctx.drawImage(ITEM_IMAGES.teleport,teleportBeacon.x-12/scale,teleportBeacon.y-12/scale,24/scale,24/scale);
     else bmctx.fillText('🌀',teleportBeacon.x,teleportBeacon.y);
   }
   for(const tr of localTraps){
-    bmctx.beginPath(); bmctx.arc(tr.x,tr.y,14/scale,0,Math.PI*2);
+    bmctx.beginPath(); bmctx.arc(tr.x,tr.y,9/scale,0,Math.PI*2);
     bmctx.fillStyle='#ffca28'; bmctx.fill();
     bmctx.strokeStyle='#fff'; bmctx.lineWidth=3/scale; bmctx.stroke();
-    bmctx.font=`${15/scale}px sans-serif`; bmctx.textAlign='center'; bmctx.textBaseline='middle';
+    bmctx.font=`${11/scale}px sans-serif`; bmctx.textAlign='center'; bmctx.textBaseline='middle';
     bmctx.fillText('🪤',tr.x,tr.y);
   }
 
   const me=local.alive ? local : players[local.spectateTarget];
   if(me){
-    bmctx.beginPath(); bmctx.arc(me.x,me.y,30/scale,0,Math.PI*2);
+    bmctx.beginPath(); bmctx.arc(me.x,me.y,18/scale,0,Math.PI*2);
     bmctx.fillStyle='#42a5f5'; bmctx.fill();
-    bmctx.strokeStyle='#fff'; bmctx.lineWidth=5/scale; bmctx.stroke();
+    bmctx.strokeStyle='#fff'; bmctx.lineWidth=3/scale; bmctx.stroke();
   }
   bmctx.restore();
 }
@@ -1770,14 +2184,23 @@ function drawMinimap(now){
   mctx.fillStyle = '#0d0f14'; mctx.fillRect(0,0,170,170);
   const scale = 170/WORLD_W;
   mctx.save(); mctx.scale(scale,scale);
-  mctx.fillStyle = '#262a33';
-  for(let y=0;y<GRID_H;y++) for(let x=0;x<GRID_W;x++) if(grid[y*GRID_W+x]===1) mctx.fillRect(x*CELL,y*CELL,CELL,CELL);
+  mctx.fillStyle = mapBackgroundColor||'#15171c';
+  mctx.fillRect(0,0,WORLD_W,WORLD_H);
+  for(const o of mapImages)drawRotatedMapObject(mctx,o,false);
+  // Collisionlar minimap'te de görünmez; haritanın görseli tek başına gösterilir.
+  if(!collisionWalls.length) for(let y=0;y<GRID_H;y++) for(let x=0;x<GRID_W;x++) if(grid[y*GRID_W+x]===1) mctx.fillRect(x*CELL,y*CELL,CELL,CELL);
   const elapsed = (now-matchStartTs)/1000;
   const aliveCount = Object.values(players).filter(p=>p.alive).length;
   const zone = computeZone(elapsed, aliveCount);
   mctx.beginPath(); mctx.arc(zoneCenter.x,zoneCenter.y,zone.radius,0,Math.PI*2); mctx.strokeStyle='#ff5252'; mctx.lineWidth=10; mctx.stroke();
   const info = zoneNextPhaseInfo(elapsed);
   if(info.shrinking){ mctx.beginPath(); mctx.setLineDash([16,10]); mctx.arc(zoneCenter.x,zoneCenter.y,zoneStartRadius*info.targetFrac,0,Math.PI*2); mctx.strokeStyle='#fff8'; mctx.lineWidth=4; mctx.stroke(); mctx.setLineDash([]); }
+
+  // Unique eşyaların yaklaşık konum alanları minimapte de belirgin olsun.
+  for(const it of items.filter(i=>['bag','orb','airstrike','laser'].includes(i.type))){
+    mctx.beginPath(); mctx.arc(it.x,it.y,280,0,Math.PI*2);
+    mctx.strokeStyle='rgba(255,213,79,.75)'; mctx.lineWidth=4; mctx.stroke();
+  }
 
   // Portal is visible on the minimap.
   if(teleportBeacon){
@@ -1816,6 +2239,7 @@ setInterval(()=>{
   if(matchState==='spectating' && (!local.spectateTarget || !players[local.spectateTarget]?.alive)) pickSpectateTarget();
 },1000);
 
+loadAvailableMaps();
 requestAnimationFrame(loop);
 </script>
 </body>
