@@ -217,8 +217,8 @@ const PLAYER_RADIUS = 16;
 const VIEW_DIST = 820;
 const RAY_COUNT = 130;
 
-const ITEM_ICONS = { energy:'⚡', wall:'🧱', medkit:'💉', apple:'🍎', bomb:'💣', teleport:'🌀', airstrike:'🚀', orb:'🔮', trap:'🪤', bag:'🎒', groundbomb:'💥', laser:'🔴' };
-const ITEM_NAMES = { energy:'Enerji İçeceği', wall:'Duvar', medkit:'Medkit', apple:'Elma', bomb:'Bomba', teleport:'Teleporter', airstrike:'Hava Saldırısı', orb:'Sihirli Küre', trap:'Tuzak', bag:'Çanta', groundbomb:'Yer Bombası', laser:'Lazer' };
+const ITEM_ICONS = { energy:'⚡', wall:'🧱', medkit:'💉', apple:'🍎', bomb:'💣', teleport:'🌀', airstrike:'🚀', orb:'🔮', trap:'🪤', bag:'🎒', groundbomb:'💥', laser:'🔴', radar:'📡' };
+const ITEM_NAMES = { energy:'Enerji İçeceği', wall:'Duvar', medkit:'Medkit', apple:'Elma', bomb:'Bomba', teleport:'Teleporter', airstrike:'Hava Saldırısı', orb:'Sihirli Küre', trap:'Tuzak', bag:'Çanta', groundbomb:'Yer Bombası', laser:'Lazer', radar:'Radar' };
 const ITEM_IMAGES = {};
 const ITEM_IMAGE_FAILED = new Set();
 Object.keys(ITEM_ICONS).forEach(k=>{
@@ -279,7 +279,23 @@ function rectCorners(r){
   ];
 }
 function rectContainsPoint(r,x,y){ const q=rectToLocal(r,x,y); return Math.abs(q.x)<=r.w/2 && Math.abs(q.y)<=r.h/2; }
-function pointInAnyCollision(x,y,kind='player'){ return collisionWalls.some(w=>w[kind] && rectContainsPoint(w,x,y)); }
+function pointInAnyCollision(x,y,kind='player'){
+  return collisionWalls.some(w=>w[kind] && rectContainsPoint(w,x,y));
+}
+// A spawn point is valid only if an entire player-sized circle has at least
+// 1 world-pixel clearance from every blocking collision. This also rejects
+// tiny gaps between two walls that a sampled center point could otherwise hit.
+function circleClearOfCollisions(x,y,radius=PLAYER_RADIUS,margin=1,kind='player'){
+  const rr=Math.max(0,radius+margin);
+  for(const w of collisionWalls){
+    if(!w[kind]) continue;
+    const q=rectToLocal(w,x,y);
+    const dx=Math.max(Math.abs(q.x)-w.w/2,0);
+    const dy=Math.max(Math.abs(q.y)-w.h/2,0);
+    if(dx*dx+dy*dy <= rr*rr) return false;
+  }
+  return true;
+}
 
 // Spawn noktaları JSON'da varsa doğrudan kullanılır; yoksa yalnızca o JSON'un
 // grid'inden güvenli varsayılan noktalar üretilir. Haritanın kendisi kodda yoktur.
@@ -423,6 +439,8 @@ let particles = []; // explosion particles
 let explosionsFX = []; // {x,y,r,t0}
 let matchState = 'menu'; // menu, lobby, playing, spectating, ended
 let matchStartTs = 0; // performance.now() ms when game_start received
+let matchParticipants = new Set(); // players expected in the current match
+let matchStateSeen = new Set(); // participants that have sent their first in-game state
 let mapSeed = 0;
 let itemsRng = null;
 let bonusShrinkEvents = []; // elapsed seconds of magic-orb uses
@@ -440,6 +458,8 @@ let airstrikeUsedCount = 0;
 let groundBombs = []; // {id,x,y,ownerId,armed}
 let lasers = []; // {id,x1,y1,x2,y2,t0,t1,ownerId}
 let orbUsedCount = 0;
+let radarUntil = 0; // Radar: everyone is revealed on map until this timestamp
+let energyBoosts = []; // each drink grants its own 10s speed window
 let killFeedList = [];
 let nextIdCounter = 1;
 const COLORS = ['#ff5252','#42a5f5','#66bb6a','#ffca28','#ab47bc','#26c6da','#ff7043','#ec407a','#9ccc65','#5c6bc0'];
@@ -590,8 +610,7 @@ function setupConn(c){
     if((matchState==='playing' || matchState==='spectating') && players[c.peer]?.votedMap===currentMap?.id){
       // late-join info sent only to players in the same map game
       c.send({t:'sync_state', matchStartTs: matchState==='playing'||matchState==='spectating' ? (performance.now()-matchStartTs) : null, seed: mapSeed,
-        walls: walls.map(w=>({id:w.id,x:w.x,y:w.y,angle:w.angle,hp:w.hp,maxHp:w.maxHp})),
-        portal: teleportBeacon ? {...teleportBeacon} : null });
+        walls: walls.map(w=>({id:w.id,x:w.x,y:w.y,angle:w.angle,hp:w.hp,maxHp:w.maxHp})) });
     }
     updateLobbyUI();
   });
@@ -634,12 +653,12 @@ function handleData(c, d){
         mapSeed = d.seed; itemsRng = makeRng(mapSeed);
         matchStartTs = performance.now() - d.matchStartTs;
         walls = d.walls.map(w=>({...w}));
-        teleportBeacon = d.portal ? {...d.portal} : null;
         enterSpectateMode();
       }
       break;
     }
     case 'state': {
+      matchStateSeen.add(from);
       if(!players[from]) players[from] = { id:from, x:d.x, y:d.y, color: COLORS[Math.floor(Math.random()*COLORS.length)] };
       const p = players[from];
       // smooth remote movement: interpolate from current rendered pos to the new target
@@ -687,23 +706,12 @@ function handleData(c, d){
       });
       break;
     }
-    case 'teleporter_place': {
-      teleportBeacon = {x:d.x,y:d.y,ownerId:from,itemId:d.itemId||null};
-      spawnNotif(`${players[from]?.name||'???'} portal kurdu`);
-      break;
-    }
-    case 'teleporter_cancel': {
-      if(teleportBeacon && teleportBeacon.ownerId===from) teleportBeacon=null;
-      break;
-    }
-    case 'teleporter_used': {
-      if(teleportBeacon && teleportBeacon.ownerId===from) teleportBeacon=null;
-      break;
-    }
-    case 'groundbomb_place': {
-      if(!groundBombs.find(x=>x.id===d.id)) groundBombs.push({id:d.id,x:d.x,y:d.y,ownerId:d.ownerId||from,armed:true});
-      break;
-    }
+    // Portallar oyuncuya özeldir. Ağ üzerinden portal konumu göndermiyoruz;
+    // böylece her oyuncu yalnızca kendi portalını görür ve kullanır.
+    case 'teleporter_place':
+    case 'teleporter_cancel':
+    case 'teleporter_used': { break; }
+    case 'groundbomb_place': { break; }
     case 'groundbomb_trigger': {
       groundBombs=groundBombs.filter(x=>x.id!==d.id);
       spawnExplosionFX(d.x,d.y,115);
@@ -794,6 +802,16 @@ function checkAllReady(){
 }
 function startMatchLocal(elapsedMs){
   matchState = 'playing';
+  // Freeze the participant list at match start. A client must receive an
+  // in-game state from every participant before the victory check is allowed.
+  // This prevents the 3-2-1 countdown from being mistaken for a one-player match.
+  matchParticipants = new Set(
+    Object.values(players)
+      .filter(p => !p.disconnected && (p.votedMap||selectedMapId) === (currentMap?.id||selectedMapId))
+      .map(p => p.id)
+  );
+  matchParticipants.add(myId);
+  matchStateSeen = new Set([myId]);
   if(players[myId]) players[myId].inGameAlready=true;
   matchStartTs = performance.now() - elapsedMs;
   document.getElementById('mainMenu').style.display='none';
@@ -804,7 +822,7 @@ function startMatchLocal(elapsedMs){
   const spawnPool = validSpawns.length ? validSpawns : spawnPoints.filter(sp=>!pointInAnyCollision(sp.x,sp.y,'player'));
   const sp = spawnPool[mySlot % Math.max(1,spawnPool.length)] || {x:WORLD_W/2,y:WORLD_H/2};
   local.x = sp.x; local.y = sp.y; local.hp = 100; local.alive = true;
-  local.ammo = local.maxAmmo; local.inventory = []; local.activeSlot = 0; local.hasBag=false; local.bagDroppedOnDeath=false; localTraps=[]; groundBombs=[]; lasers=[]; teleportBeacon=null; trapBlindUntil=0; trapLockUntil=0;
+  local.ammo = local.maxAmmo; energyBoosts=[]; radarUntil=0; local.inventory = []; local.activeSlot = 0; local.hasBag=false; local.bagDroppedOnDeath=false; localTraps=[]; groundBombs=[]; lasers=[]; teleportBeacon=null; trapBlindUntil=0; trapLockUntil=0;
   players[myId].x=local.x; players[myId].y=local.y; players[myId].hp=100; players[myId].alive=true;
   camera.x = local.x; camera.y = local.y;
   broadcast({
@@ -848,40 +866,49 @@ function spawnWorldItems(){
   items = [];
   if(!itemsRng) itemsRng = makeRng(mapSeed||1);
 
+  // Do not sample a coarse grid: detailed maps need detailed spawn validation.
+  // A whole item/player-sized circle must fit in the free space, with 1px
+  // additional clearance from every collision. This prevents spawning in
+  // hairline gaps between collision boxes.
   const floors = [];
-  for(let y=1;y<GRID_H-1;y++){
-    for(let x=1;x<GRID_W-1;x++){
-      if(grid[y*GRID_W+x]===0){
-        floors.push({x:x*CELL+CELL/2,y:y*CELL+CELL/2});
-      }
+  const step = 12;
+  const margin = PLAYER_RADIUS + 2;
+  for(let y=margin;y<=WORLD_H-margin;y+=step){
+    for(let x=margin;x<=WORLD_W-margin;x+=step){
+      if(circleClearOfCollisions(x,y,PLAYER_RADIUS,1,'player')) floors.push({x,y});
     }
   }
+  if(!floors.length){
+    console.warn('Haritada güvenli eşya spawn alanı bulunamadı.');
+    return;
+  }
 
-  const pick = (avoidCenter=false)=>{
-    if(!avoidCenter || floors.length<2) return floors[Math.floor(itemsRng()*floors.length)];
-    for(let tries=0;tries<80;tries++){
+  const used=[];
+  const tooClose=(p,minDist=52)=>used.some(q=>Math.hypot(p.x-q.x,p.y-q.y)<minDist);
+  const pick=(avoidCenter=false)=>{
+    for(let tries=0;tries<300;tries++){
       const p=floors[Math.floor(itemsRng()*floors.length)];
-      if(Math.hypot(p.x-WORLD_W/2,p.y-WORLD_H/2)>WORLD_W*0.18) return p;
+      if(avoidCenter && Math.hypot(p.x-WORLD_W/2,p.y-WORLD_H/2)<=Math.min(WORLD_W,WORLD_H)*.18) continue;
+      if(!tooClose(p)) return p;
+    }
+    for(let tries=0;tries<300;tries++){
+      const p=floors[Math.floor(itemsRng()*floors.length)];
+      if(!tooClose(p,28)) return p;
     }
     return floors[Math.floor(itemsRng()*floors.length)];
   };
 
-  // Normal eşyaların HEPSİ haritada birden fazla kez çıkar.
-  // Harita büyüdüğü için yoğunluğu korumak adına her türden 45 adet.
-  const commonTypes = ['energy','wall','medkit','apple','bomb','teleport','trap','groundbomb'];
+  const commonTypes=['energy','wall','medkit','apple','bomb','teleport','trap','groundbomb','radar'];
   for(const type of commonTypes){
     for(let i=0;i<45;i++){
-      const p=pick(true);
-      items.push({id:'it'+(nextIdCounter++), type, x:p.x, y:p.y});
+      const p=pick(true); if(!p) continue;
+      used.push(p); items.push({id:'it'+(nextIdCounter++),type,x:p.x,y:p.y});
     }
   }
-
-  // Unique eşyaların HER BİRİNDEN yalnızca 1 tane çıkar.
-  // Bunlar merkeze zorlanmaz, diğer eşyalar gibi haritanın rastgele zeminlerine dağılır.
-  const specialTypes = ['bag','orb','airstrike','laser'];
+  const specialTypes=['bag','orb','airstrike','laser'];
   for(const type of specialTypes){
-    const p=pick(true);
-    items.push({id:'it'+(nextIdCounter++), type, x:p.x, y:p.y});
+    const p=pick(true); if(!p) continue;
+    used.push(p); items.push({id:'it'+(nextIdCounter++),type,x:p.x,y:p.y});
   }
 }
 
@@ -1219,7 +1246,7 @@ function useActiveItem(){
   const item = local.inventory[local.activeSlot];
   if(!item || !local.alive) return;
   switch(item.type){
-    case 'energy': local.speedUntil = performance.now()+5000; consumeActive(); spawnNotif('Hız arttı!'); break;
+    case 'energy': { const until=performance.now()+10000; energyBoosts.push(until); local.speedUntil=Math.max(...energyBoosts); consumeActive(); spawnNotif(energyBoosts.length>1?'⚡ Enerji üst üste! Hız çok arttı!':'⚡ Hız arttı!'); break; }
     case 'medkit': local.hp=100; players[myId].hp=100; updateHealthUI(); consumeActive(); spawnNotif('Tam iyileşme'); break;
     case 'apple': local.hp=Math.min(100,local.hp+25); players[myId].hp=local.hp; updateHealthUI(); consumeActive(); spawnNotif('+25 can'); break;
     case 'wall': placeWall(); consumeActive(); break;
@@ -1227,6 +1254,7 @@ function useActiveItem(){
     case 'airstrike': openAirstrikeTargeting(); break;
     case 'orb': useMagicOrb(); consumeActive(); break;
     case 'laser': openLaserTargeting(); break;
+    case 'radar': radarUntil=performance.now()+3000; consumeActive(); spawnNotif('📡 Radar aktif — herkes 3 saniye haritada görünüyor!'); break;
     case 'groundbomb': placeGroundBomb(); consumeActive(); break;
     case 'trap': placeTrap(); consumeActive(); break;
     case 'bag': activateBag(); break;
@@ -1248,7 +1276,6 @@ function useTeleporter(item){
   if(!item.placed){
     item.placed = true;
     teleportBeacon = {x:local.x, y:local.y, ownerId:myId, itemId:item._instanceId||null};
-    broadcast({t:'teleporter_place', x:local.x, y:local.y, itemId:item._instanceId||null});
     spawnNotif('Portal kondu — E ile kullan, P ile iptal et');
     renderInventoryUI();
   } else {
@@ -1266,7 +1293,6 @@ function cancelPlacedPortal(){
   if(!item || !teleportBeacon || teleportBeacon.ownerId!==myId) return;
   item.placed=false;
   teleportBeacon=null;
-  broadcast({t:'teleporter_cancel'});
   spawnNotif('Portal iptal edildi');
   renderInventoryUI();
 }
@@ -1321,7 +1347,6 @@ function placeGroundBomb(){
   const x=local.x+Math.cos(local.angle)*38, y=local.y+Math.sin(local.angle)*38;
   const id='gb_'+myId+'_'+Date.now()+'_'+Math.random().toString(36).slice(2);
   const gb={id,x,y,ownerId:myId,armed:true}; groundBombs.push(gb);
-  broadcast({t:'groundbomb_place',...gb});
   spawnNotif('💥 Yer bombası kuruldu');
 }
 function triggerGroundBomb(gb, reason=''){
@@ -1341,6 +1366,22 @@ function triggerNearbyGroundBombs(x,y,radius){
     if(Math.hypot(gb.x-x,gb.y-y)<radius+80) triggerGroundBomb(gb,'trap');
   }
 }
+function checkLocalGroundBombTriggers(){
+  // Only the owner knows the exact bomb positions. The owner watches remote
+  // players and broadcasts only the explosion event, never the bomb location.
+  for(const gb of [...groundBombs]){
+    if(gb.ownerId!==myId || !gb.armed) continue;
+    let hit=false;
+    for(const id in players){
+      if(id===myId) continue;
+      const p=players[id];
+      if(!p?.alive) continue;
+      if(Math.hypot(p.x-gb.x,p.y-gb.y)<28){ hit=true; break; }
+    }
+    if(hit) triggerGroundBomb(gb,'player');
+  }
+}
+
 function useMagicOrb(){
   orbUsedCount++;
   const elapsed = (performance.now()-matchStartTs)/1000;
@@ -1630,12 +1671,14 @@ function updateAliveCounter(){
 
   document.getElementById('aliveNum').textContent = c;
 
-  // Oyun başladıktan sonra en az 2 oyuncunun gerçekten
-  // senkronize olduğunu görmeden kazanma kontrolü yapma.
+  // Do not decide the winner during/just after the countdown. Every expected
+  // participant must first send at least one in-game state. Otherwise the
+  // host can briefly see only itself and declare ZAFER before the other
+  // clients finish entering the match.
   if(matchState==='playing' && c<=1 && local.alive){
-    const connectedPlayers = Object.values(players).filter(p=>!p.disconnected);
-
-    if(connectedPlayers.length >= 2 && performance.now()-matchStartTs > 3000){
+    const expected = [...matchParticipants].filter(id => players[id] && !players[id].disconnected);
+    const allSynced = expected.length >= 2 && expected.every(id => matchStateSeen.has(id));
+    if(allSynced && performance.now()-matchStartTs > 1000){
       endMatch(true);
     }
   }
@@ -1683,7 +1726,9 @@ function update(dt, now){
 
   if(local.alive){
     const trapped = now < trapLockUntil;
-    const speed = (now<local.speedUntil ? 350 : 220);
+    energyBoosts = energyBoosts.filter(t=>t>now);
+    local.speedUntil = energyBoosts.length ? Math.max(...energyBoosts) : 0;
+    const speed = energyBoosts.length>=2 ? 500 : (energyBoosts.length===1 ? 350 : 220);
     let dx=0, dy=0;
     if(!trapped){
       if(keys['KeyW']) dy-=1; if(keys['KeyS']) dy+=1;
@@ -1721,6 +1766,7 @@ function update(dt, now){
     }
     tryPickupNearby();
     checkLocalTrapTriggers(now);
+    checkLocalGroundBombTriggers();
   }
 
   // Yer bombası, oyuncunun hayatta olup olmamasından bağımsız olarak alan dışına çıkınca patlar.
@@ -1956,13 +2002,12 @@ function drawPlayers(){
     if(!p.alive) continue;
     if(id!==myId && matchState==='playing'){
   if(performance.now()<trapBlindUntil && local.alive) continue;
+  const radarActive = performance.now()<radarUntil;
   const dist = Math.hypot(p.x-local.x, p.y-local.y);
-
-  // Görüş mesafesinin dışındaysa gösterme.
-  if(dist > VIEW_DIST) continue;
-
-  // Duvar arkasındaysa gösterme.
-  if(!hasLOS(local.x,local.y,p.x,p.y)) continue;
+  if(!radarActive){
+    if(dist > VIEW_DIST) continue;
+    if(!hasLOS(local.x,local.y,p.x,p.y)) continue;
+  }
 }
     ctx.save();
     ctx.translate(p.x,p.y);
@@ -2171,6 +2216,14 @@ function drawBigMap(){
     bmctx.fillText('🪤',tr.x,tr.y);
   }
 
+  if(performance.now()<radarUntil){
+    for(const id in players){
+      const p=players[id]; if(!p?.alive || id===myId) continue;
+      bmctx.beginPath(); bmctx.arc(p.x,p.y,24/scale,0,Math.PI*2);
+      bmctx.fillStyle='#ff5252'; bmctx.fill(); bmctx.strokeStyle='#fff'; bmctx.lineWidth=4/scale; bmctx.stroke();
+      bmctx.font=`${18/scale}px sans-serif`; bmctx.textAlign='center'; bmctx.textBaseline='bottom'; bmctx.fillStyle='#fff'; bmctx.fillText('📡',p.x,p.y-28/scale);
+    }
+  }
   const me=local.alive ? local : players[local.spectateTarget];
   if(me){
     bmctx.beginPath(); bmctx.arc(me.x,me.y,18/scale,0,Math.PI*2);
@@ -2216,6 +2269,13 @@ function drawMinimap(now){
     }
   }
 
+  if(performance.now()<radarUntil){
+    for(const id in players){
+      const p=players[id]; if(!p?.alive || id===myId) continue;
+      mctx.beginPath(); mctx.arc(p.x,p.y,55,0,Math.PI*2); mctx.fillStyle='#ff5252'; mctx.fill(); mctx.strokeStyle='#fff'; mctx.lineWidth=5; mctx.stroke();
+    }
+  }
+
   // Always show ourselves, including while spectating (spectating view uses the watched player).
   const me = local.alive ? local : players[local.spectateTarget];
   if(me){
@@ -2232,7 +2292,9 @@ function drawMinimap(now){
 setInterval(()=>{
   if(matchState==='playing' || matchState==='spectating'){
     const alive = Object.values(players).filter(p=>p.alive);
-    if(alive.length<=1 && matchState!=='ended' && (performance.now()-matchStartTs>3000)){
+    const expected = [...matchParticipants].filter(id => players[id] && !players[id].disconnected);
+    const allSynced = expected.length >= 2 && expected.every(id => matchStateSeen.has(id));
+    if(allSynced && alive.length<=1 && matchState!=='ended' && (performance.now()-matchStartTs>1000)){
       endMatch(alive.length===1 && alive[0].id===myId);
     }
   }
